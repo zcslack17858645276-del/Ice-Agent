@@ -91,7 +91,7 @@ button {
 .pet-stage {
   position: relative;
   flex: 1;
-  min-height: 300px;
+  min-height: 325px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -106,6 +106,161 @@ button {
   border-radius: 50%;
   background: rgba(92, 191, 238, 0.12);
   box-shadow: 0 0 60px rgba(76, 190, 250, 0.22);
+}
+.avatar-display {
+  position: relative;
+  z-index: 1;
+  width: 218px;
+  height: 218px;
+  display: grid;
+  place-items: center;
+}
+.avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.25));
+  transform-origin: center bottom;
+}
+.avatar-image.animation-disabled {
+  animation: none !important;
+}
+.avatar-image.state-idle {
+  animation: avatar-breathe 2.4s ease-in-out infinite;
+}
+.avatar-image.state-thinking {
+  animation: avatar-think 1.4s ease-in-out;
+}
+.avatar-image.state-happy {
+  animation: avatar-happy 1.1s ease-out;
+}
+.avatar-image.state-sad {
+  animation: avatar-sad 1.5s ease-in-out;
+}
+.avatar-image.state-working {
+  animation: avatar-work 1.8s ease-in-out infinite;
+}
+.avatar-image.state-sleeping {
+  animation: avatar-sleep 3s ease-in-out infinite;
+}
+.avatar-image.expression-cheerful {
+  filter: drop-shadow(0 12px 18px rgba(57, 204, 157, 0.3)) saturate(1.12);
+}
+.avatar-image.expression-concerned {
+  filter: drop-shadow(0 12px 18px rgba(239, 143, 104, 0.28)) saturate(0.82);
+}
+.avatar-image.expression-calm {
+  filter: drop-shadow(0 12px 18px rgba(118, 174, 219, 0.26)) saturate(0.9);
+}
+.avatar-fallback {
+  width: 124px;
+  height: 124px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(177, 215, 228, 0.6);
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 28%, #d8f3ee, #69b9a9 52%, #356c68);
+  box-shadow: 0 0 28px rgba(90, 205, 170, 0.25);
+  color: white;
+  font-size: 38px;
+}
+.avatar-fallback.state-sleeping {
+  opacity: 0.7;
+}
+.avatar-fallback.state-sad {
+  background: radial-gradient(circle at 35% 28%, #dbe9ef, #72a2bd 52%, #415b78);
+}
+.state-label {
+  text-transform: capitalize;
+}
+.state-controls {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+  max-width: 350px;
+  margin-top: 12px;
+}
+.state-button {
+  min-height: 25px;
+  padding: 3px 7px;
+  border: 1px solid rgba(142, 190, 203, 0.18);
+  border-radius: 6px;
+  color: #9ab1bb;
+  background: rgba(14, 35, 39, 0.76);
+  font-size: 10px;
+}
+.state-button.active {
+  border-color: rgba(109, 213, 175, 0.6);
+  color: #d9fff0;
+  background: rgba(45, 129, 105, 0.35);
+}
+.state-button:hover {
+  color: white;
+}
+@keyframes avatar-breathe {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-5px) scale(1.015);
+  }
+}
+@keyframes avatar-think {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  30%,
+  70% {
+    transform: rotate(-3deg) translateY(-3px);
+  }
+}
+@keyframes avatar-happy {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  35% {
+    transform: translateY(-12px) scale(1.04);
+  }
+  65% {
+    transform: translateY(-4px) scale(1.02);
+  }
+}
+@keyframes avatar-sad {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  45% {
+    transform: translateY(5px) scale(0.98);
+  }
+}
+@keyframes avatar-work {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-3px) rotate(-1deg);
+  }
+  75% {
+    transform: translateX(3px) rotate(1deg);
+  }
+}
+@keyframes avatar-sleep {
+  0%,
+  100% {
+    transform: scale(0.98);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 .pet-orb {
   position: relative;
@@ -222,6 +377,28 @@ button {
   border-bottom: 1px solid rgba(145, 190, 235, 0.1);
   color: #b8ccdc;
   font-size: 12px;
+}
+.setting-row select {
+  max-width: 150px;
+  border: 1px solid rgba(142, 190, 203, 0.26);
+  border-radius: 5px;
+  padding: 4px 7px;
+  color: #daf0ee;
+  background: #142b30;
+  font-size: 12px;
+}
+.setting-row input[type='checkbox'] {
+  accent-color: #3bb48d;
+}
+.asset-error,
+.license-note {
+  padding: 8px 0 0;
+  color: #ffb79f;
+  font-size: 10px;
+  line-height: 1.4;
+}
+.license-note {
+  color: #9aabae;
 }
 .setting-row:last-child {
   border-bottom: 0;

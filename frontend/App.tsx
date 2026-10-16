@@ -1,7 +1,43 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { AnimationController } from './avatar/animationController';
+import { AvatarRegistry } from './avatar/registry';
+import { StaticAvatarRenderer } from './avatar/renderer';
+import { AvatarStateMachine, type AvatarSnapshot } from './avatar/stateMachine';
+import {
+  AVATAR_EXPRESSIONS,
+  PET_STATES,
+  type AvatarExpression,
+  type PetState
+} from './avatar/types';
 import { WindowService, type AppInfo } from './windowService';
 
 type Panel = 'chat' | 'settings' | null;
+type Preferences = { characterId: string; animationEnabled: boolean };
+const defaultPreferences: Preferences = { characterId: 'xglk', animationEnabled: true };
+const preferencesKey = 'ice-agent.avatar-preferences.v1';
+
+function readPreferences(): Preferences {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(preferencesKey) ?? 'null');
+    if (
+      typeof raw === 'object' &&
+      raw !== null &&
+      'characterId' in raw &&
+      'animationEnabled' in raw
+    ) {
+      const stored = raw as Record<string, unknown>;
+      const characterId = AvatarRegistry.list().some(
+        (asset) => asset.characterId === stored.characterId
+      )
+        ? String(stored.characterId)
+        : defaultPreferences.characterId;
+      return { characterId, animationEnabled: stored.animationEnabled === true };
+    }
+  } catch {
+    return defaultPreferences;
+  }
+  return defaultPreferences;
+}
 
 export default function App() {
   const [panel, setPanel] = useState<Panel>(null);
@@ -9,6 +45,13 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
+  const [preferences, setPreferences] = useState(readPreferences);
+  const machine = useMemo(() => new AvatarStateMachine(), []);
+  const controller = useMemo(() => new AnimationController(), []);
+  const [avatar, setAvatar] = useState<AvatarSnapshot>(machine.getSnapshot());
+  const [assetError, setAssetError] = useState<string | null>(null);
+  const [assetFailed, setAssetFailed] = useState(false);
+  const asset = AvatarRegistry.find(preferences.characterId, avatar.state, avatar.expression);
 
   useEffect(() => {
     let active = true;
@@ -21,9 +64,110 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    localStorage.setItem(preferencesKey, JSON.stringify(preferences));
+  }, [preferences]);
+
+  useEffect(() => {
+    setAssetFailed(false);
+    setAssetError(null);
+    const startedAt = performance.now();
+    controller
+      .preload([asset.src])
+      .then(() =>
+        console.info('[avatar:preload]', {
+          characterId: asset.characterId,
+          durationMs: Math.round(performance.now() - startedAt)
+        })
+      )
+      .catch((reason: Error) => {
+        setAssetError(reason.message);
+        console.error('[avatar:preload]', reason);
+      });
+  }, [asset.src, controller]);
+
+  useEffect(() => {
+    const clip = asset.states[avatar.state];
+    if (!clip) {
+      controller.stop();
+      return;
+    }
+    if (!preferences.animationEnabled) {
+      controller.stop();
+      if (avatar.dwellMs !== null) {
+        const timer = window.setTimeout(
+          () => setAvatar(machine.finishTemporary(`${avatar.state} dwell completed`)),
+          avatar.dwellMs
+        );
+        return () => window.clearTimeout(timer);
+      }
+      return;
+    }
+    controller.play(clip, () => {
+      const next = machine.finishTemporary(`${avatar.state} animation completed`);
+      if (next !== avatar) {
+        console.info('[avatar:state]', {
+          state: next.state,
+          reason: next.reason,
+          time: new Date(next.changedAt).toISOString()
+        });
+        setAvatar(next);
+      }
+    });
+    return () => controller.stop();
+  }, [avatar, asset, controller, machine, preferences.animationEnabled]);
+
   const run = (action: () => Promise<unknown>) => {
     setError(null);
     action().catch((reason: Error) => setError(reason.message));
+  };
+
+  const transition = (state: PetState) => {
+    const next = machine.transition({
+      type: 'avatar:set_state',
+      state,
+      reason: state === 'SLEEPING' ? 'explicit-sleep-policy' : 'user state selection',
+      priority: state === 'HAPPY' || state === 'SAD' ? 2 : 0,
+      dwellMs: AvatarRegistry.find(preferences.characterId, state, avatar.expression).states[state]
+        ?.durationMs
+    });
+    if (next !== avatar) {
+      console.info('[avatar:state]', {
+        state: next.state,
+        reason: next.reason,
+        time: new Date(next.changedAt).toISOString()
+      });
+      setAvatar(next);
+    }
+  };
+
+  const chooseCharacter = (characterId: string) => {
+    const nextAsset = AvatarRegistry.find(characterId, avatar.state, avatar.expression);
+    const startedAt = performance.now();
+    controller
+      .preload([nextAsset.src])
+      .then(() =>
+        console.info('[avatar:preload]', {
+          characterId: nextAsset.characterId,
+          durationMs: Math.round(performance.now() - startedAt)
+        })
+      )
+      .catch((reason: Error) => {
+        setAssetError(reason.message);
+        console.error('[avatar:preload]', reason);
+      });
+    setPreferences((current) => ({ ...current, characterId }));
+    setAssetFailed(false);
+    setAssetError(null);
+  };
+
+  const setExpression = (expression: AvatarExpression) => {
+    const next = machine.transition({ type: 'avatar:set_expression', expression });
+    console.info('[avatar:expression]', {
+      expression: next.expression,
+      time: new Date(next.changedAt).toISOString()
+    });
+    setAvatar(next);
   };
 
   return (
@@ -67,18 +211,54 @@ export default function App() {
       )}
 
       <section className="pet-stage" data-tauri-drag-region>
-        <div className="halo" aria-hidden="true" />
-        <div className="pet-orb" role="img" aria-label="Desktop pet placeholder">
-          <span>✦</span>
+        <div
+          className="avatar-display"
+          role="img"
+          aria-label={`${asset.name} avatar, ${avatar.state.toLowerCase()}`}
+        >
+          {assetFailed ? (
+            <div
+              className={`avatar-fallback state-${avatar.state.toLowerCase()}`}
+              aria-hidden="true"
+            >
+              <span>✦</span>
+            </div>
+          ) : (
+            <StaticAvatarRenderer
+              state={avatar.state}
+              expression={avatar.expression}
+              asset={asset}
+              animationEnabled={preferences.animationEnabled}
+              onAssetError={(messageText) => {
+                setAssetFailed(true);
+                setAssetError(messageText);
+                console.error('[avatar:asset]', messageText);
+              }}
+            />
+          )}
         </div>
-        <h1>Ready when you are</h1>
-        <p>Ice Agent desktop companion</p>
+        <h1>{asset.name}</h1>
+        <p className="state-label">
+          {avatar.state.toLowerCase()} · {avatar.expression.toLowerCase()}
+        </p>
         {loading && <span className="status">Connecting…</span>}
         {!loading && info && (
           <span className="status">
             {info.environment} · v{info.version}
           </span>
         )}
+        <div className="state-controls" aria-label="Pet state">
+          {PET_STATES.map((state) => (
+            <button
+              key={state}
+              className={avatar.state === state ? 'state-button active' : 'state-button'}
+              aria-pressed={avatar.state === state}
+              onClick={() => transition(state)}
+            >
+              {state[0] + state.slice(1).toLowerCase()}
+            </button>
+          ))}
+        </div>
       </section>
 
       {panel === 'chat' && (
@@ -90,7 +270,7 @@ export default function App() {
             </button>
           </div>
           <div className="empty-state">
-            <span className="empty-icon">○</span>
+            <span className="empty-icon">◌</span>
             <strong>No messages yet</strong>
             <span>Conversation will be available in a future phase.</span>
           </div>
@@ -108,7 +288,7 @@ export default function App() {
               aria-label="Message"
             />
             <button aria-label="Send message" title="Send message" disabled={!message.trim()}>
-              ↑
+              ➤
             </button>
           </form>
         </section>
@@ -122,18 +302,57 @@ export default function App() {
               Close
             </button>
           </div>
-          <div className="setting-row">
-            <span>Always on top</span>
-            <span className="setting-value">Enabled</span>
+          <label className="setting-row" htmlFor="character-select">
+            <span>Character</span>
+            <select
+              id="character-select"
+              value={preferences.characterId}
+              onChange={(event) => chooseCharacter(event.target.value)}
+            >
+              {AvatarRegistry.list().map((character) => (
+                <option key={character.characterId} value={character.characterId}>
+                  {character.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="setting-row" htmlFor="animation-toggle">
+            <span>Animations</span>
+            <input
+              id="animation-toggle"
+              type="checkbox"
+              checked={preferences.animationEnabled}
+              onChange={(event) =>
+                setPreferences((current) => ({
+                  ...current,
+                  animationEnabled: event.target.checked
+                }))
+              }
+            />
+          </label>
+          <div className="setting-row" aria-label="Expression">
+            <span>Expression</span>
+            <select
+              value={avatar.expression}
+              onChange={(event) => setExpression(event.target.value as AvatarExpression)}
+            >
+              {AVATAR_EXPRESSIONS.map((expression) => (
+                <option key={expression} value={expression}>
+                  {expression[0] + expression.slice(1).toLowerCase()}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="setting-row">
-            <span>Window size</span>
-            <span className="setting-value">420 × 620</span>
+            <span>Current state</span>
+            <span className="setting-value">{avatar.state}</span>
           </div>
-          <div className="setting-row">
-            <span>Features</span>
-            <span className="setting-value">Foundation</span>
-          </div>
+          {assetError && (
+            <div className="asset-error" role="alert">
+              {assetError}
+            </div>
+          )}
+          <div className="license-note">{asset.license.license}</div>
         </section>
       )}
 
@@ -142,10 +361,10 @@ export default function App() {
           className={panel === 'chat' ? 'tool active' : 'tool'}
           onClick={() => setPanel(panel === 'chat' ? null : 'chat')}
         >
-          <span>◇</span>Chat
+          <span>◌</span>Chat
         </button>
         <button className="tool" onClick={() => run(WindowService.drag)}>
-          <span>✣</span>Move
+          <span>✥</span>Move
         </button>
         <button
           className={panel === 'settings' ? 'tool active' : 'tool'}

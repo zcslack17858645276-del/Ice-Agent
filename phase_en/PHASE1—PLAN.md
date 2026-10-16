@@ -68,3 +68,11 @@ Give the desktop pet replaceable visual assets, basic animations, expressions, a
 - Event names must remain stable because Phases 2, 4, and 5 will reuse them.
 - Live2D/3D integration should add a renderer implementation without changing the public state-machine contract.
 
+## Implementation Status
+
+- Implemented: typed avatar contracts, versioned manifest and registry, state machine, animation/preload controller, static renderer adapter, six visible state presentations, expression switching, fallback display, settings persistence, and focused state/manifest tests.
+- Verification gap: component-level automated tests have not been added; behavior is covered by the state-machine and asset-manifest tests plus production build checks.
+- Asset verification: two transparent RGBA portraits are now registered and selectable; the manifest records dimensions and byte sizes for both.
+- Live2D verification: the model, moc3, texture, physics, display-info, and four motion files are present and tested. The Cubism SDK runtime itself is not included; adding `live2dcubismcore` and the Cubism Framework remains the integration prerequisite for a real Live2D renderer.
+- Manual Windows checks remain: transparent window behavior, DPI scaling, frame rate, and long-running animation loops.
+

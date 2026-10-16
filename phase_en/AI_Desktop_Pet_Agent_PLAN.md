@@ -139,9 +139,9 @@ Later:
 
 ### Avatar System
 
-- [ ] Character asset management
-- [ ] Animation control
-- [ ] Expression switching
+- [x] Character asset management
+- [x] Animation control
+- [x] Expression switching
 
 ### State System
 
@@ -156,9 +156,9 @@ Definitions:
 
 Implementation:
 
-- [ ] Create a state machine
-- [ ] Implement state transition logic
-- [ ] Bind states to animations
+- [x] Create a state machine
+- [x] Implement state transition logic
+- [x] Bind states to animations
 
 ## Phase Deliverable
 
