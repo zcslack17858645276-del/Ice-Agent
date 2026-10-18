@@ -6,6 +6,7 @@
  */
 
 import { CubismFramework } from '@cubism/live2dcubismframework';
+import { ACubismMotion } from '@cubism/motion/acubismmotion';
 import { CubismUserModel } from '@cubism/model/cubismusermodel';
 import { CubismMotion } from '@cubism/motion/cubismmotion';
 import { CubismExpressionMotion } from '@cubism/motion/cubismexpressionmotion';
@@ -21,7 +22,7 @@ class IceCubismModel extends CubismUserModel {
   }
 
   startMotion(motion: CubismMotion): void {
-    this._motionManager.startMotionPriority(motion, true, 1);
+    this._motionManager.startMotionPriority(motion, false, 1);
   }
 
   updateFrame(deltaSeconds: number): void {
@@ -141,9 +142,13 @@ async function createModel(
       throw new Error(`Cubism could not parse expression '${name}' (${expression.path}).`);
     expressions.set(name, motion);
   }
-  const projection = new CubismMatrix44();
-  projection.loadIdentity();
-  model.getModelMatrix().setHeight(1.8);
+  const modelCanvasWidth = model.cubismModel.getCanvasWidth();
+  const portraitViewport = canvas.clientWidth < canvas.clientHeight;
+  if (portraitViewport && modelCanvasWidth > 1.0) {
+    model.getModelMatrix().setWidth(1.8);
+  } else {
+    model.getModelMatrix().setHeight(1.8);
+  }
   let disposed = false;
 
   return {
@@ -165,7 +170,15 @@ async function createModel(
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
       model.getRenderer().setRenderState(null, [0, 0, canvas.width, canvas.height]);
+      const projection = new CubismMatrix44();
+      projection.loadIdentity();
+      if (canvas.width < canvas.height && modelCanvasWidth > 1.0) {
+        projection.scale(1.0, canvas.width / canvas.height);
+      } else if (canvas.width > 0) {
+        projection.scale(canvas.height / canvas.width, 1.0);
+      }
       const matrix = new CubismMatrix44();
+      matrix.loadIdentity();
       matrix.multiplyByMatrix(projection);
       matrix.multiplyByMatrix(model.getModelMatrix());
       model.getRenderer().setMvpMatrix(matrix);
@@ -174,6 +187,9 @@ async function createModel(
     playMotion(group, index = 0) {
       const motion = motions.get(group)?.[index];
       if (motion) model.startMotion(motion);
+    },
+    hasMotion(group) {
+      return (motions.get(group)?.length ?? 0) > 0;
     },
     stopMotion() {
       model.stopMotion();
@@ -189,6 +205,10 @@ async function createModel(
       if (disposed) return;
       disposed = true;
       model.release();
+      for (const motion of motions.values()) {
+        for (const cachedMotion of motion) ACubismMotion.delete(cachedMotion);
+      }
+      for (const expression of expressions.values()) ACubismMotion.delete(expression);
       for (const texture of textures) gl.deleteTexture(texture);
       const loseContext = gl.getExtension('WEBGL_lose_context');
       loseContext?.loseContext();

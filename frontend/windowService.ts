@@ -27,7 +27,13 @@ export const WindowService = {
   hide: () => command<void>('window:hide'),
   toggle: () => command<boolean>('window:toggle'),
   close: () => command<void>('window:close'),
+  closeCurrent: () => command<void>('window:close_current'),
   minimize: () => command<void>('window:minimize'),
   drag: () => command<void>('window:drag'),
+  openPanel: (panel: 'chat' | 'settings') =>
+    invoke<void>('window:open_panel', { panel }).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new WindowServiceError(message || 'The requested panel could not be opened.');
+    }),
   getInfo: () => command<AppInfo>('app:get_info')
 };

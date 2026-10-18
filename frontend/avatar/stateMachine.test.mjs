@@ -122,6 +122,20 @@ test('Live2D model entries and every configured resource are present', async () 
   assert.equal(getMotionGroup('HAPPY'), 'Shake');
 });
 
+test('all six pet states resolve to supported motion groups or the idle fallback', () => {
+  const expected = {
+    IDLE: 'Idle',
+    THINKING: 'Nod',
+    HAPPY: 'Shake',
+    SAD: 'Shake',
+    WORKING: 'Idle',
+    SLEEPING: 'Idle'
+  };
+  for (const [state, group] of Object.entries(expected)) {
+    assert.equal(getMotionGroup(state), group);
+  }
+});
+
 test('renamed entry resolves resources against its configured model directory', async () => {
   const entryUrl = 'https://models.test/xglk/renamed.model3.json';
   const originalResourceBase = 'https://models.test/xglk/seethrough_output_1.model3.json';

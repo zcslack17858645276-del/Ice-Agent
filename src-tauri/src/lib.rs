@@ -1,5 +1,5 @@
 use serde::Serialize;
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 const MAIN_WINDOW: &str = "main";
 
@@ -63,6 +63,13 @@ fn window_close(app: AppHandle) -> Result<(), CommandError> {
         .map_err(|error| CommandError::WindowOperation(error.to_string()))
 }
 
+#[tauri::command(rename = "window:close_current")]
+fn window_close_current(window: WebviewWindow) -> Result<(), CommandError> {
+    window
+        .close()
+        .map_err(|error| CommandError::WindowOperation(error.to_string()))
+}
+
 #[tauri::command(rename = "window:minimize")]
 fn window_minimize(app: AppHandle) -> Result<(), CommandError> {
     let window = main_window(&app)?;
@@ -77,6 +84,46 @@ fn window_drag(app: AppHandle) -> Result<(), CommandError> {
     window
         .start_dragging()
         .map_err(|error| CommandError::WindowOperation(error.to_string()))
+}
+
+#[tauri::command(rename = "window:open_panel")]
+async fn window_open_panel(app: AppHandle, panel: String) -> Result<(), CommandError> {
+    let (label, title) = match panel.as_str() {
+        "chat" => ("panel-chat", "Ice Agent Chat"),
+        "settings" => ("panel-settings", "Ice Agent Settings"),
+        _ => {
+            return Err(CommandError::WindowOperation(
+                "Unknown panel requested.".into(),
+            ));
+        }
+    };
+    if let Some(window) = app.get_webview_window(label) {
+        window
+            .show()
+            .and_then(|()| window.set_focus())
+            .map_err(|error| CommandError::WindowOperation(error.to_string()))?;
+        return Ok(());
+    }
+    let app_for_builder = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        WebviewWindowBuilder::new(
+            &app_for_builder,
+            label,
+            WebviewUrl::App("index.html".into()),
+        )
+        .title(title)
+        .inner_size(440.0, 560.0)
+        .min_inner_size(360.0, 420.0)
+        .decorations(true)
+        .transparent(false)
+        .resizable(true)
+        .center()
+        .build()
+    })
+    .await
+    .map_err(|error| CommandError::WindowOperation(error.to_string()))?
+    .map(|_| ())
+    .map_err(|error| CommandError::WindowOperation(error.to_string()))
 }
 
 #[derive(Debug, Serialize)]
@@ -106,8 +153,10 @@ pub fn run() {
             window_hide,
             window_toggle,
             window_close,
+            window_close_current,
             window_minimize,
             window_drag,
+            window_open_panel,
             app_get_info
         ])
         .run(tauri::generate_context!())

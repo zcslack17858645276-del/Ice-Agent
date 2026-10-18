@@ -24,15 +24,18 @@ export function Live2DRenderer({
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const controller = new Live2DCharacterController(modelPath);
+    if (!canvas || !modelPath) return;
+    const controller = new Live2DCharacterController(modelPath, onError);
     controllerRef.current = controller;
     controller
       .load(canvas)
       .then(() => onReady())
-      .catch((reason: unknown) =>
-        onError(reason instanceof Error ? reason.message : String(reason))
-      );
+      .catch((reason: unknown) => {
+        const detail =
+          reason instanceof Error ? `${reason.message}\n${reason.stack ?? ''}` : String(reason);
+        console.error('[live2d:load-failure]', { modelPath, error: reason });
+        onError(`Live2D model load failed (${modelPath}): ${detail}`);
+      });
     return () => {
       controller.dispose();
       controllerRef.current = null;
@@ -42,6 +45,7 @@ export function Live2DRenderer({
   useEffect(() => controllerRef.current?.setState(state), [state]);
   useEffect(() => controllerRef.current?.setExpression(expression), [expression]);
 
+  if (!modelPath) return null;
   return (
     <canvas
       ref={canvasRef}

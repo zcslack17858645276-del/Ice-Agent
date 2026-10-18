@@ -3,7 +3,10 @@ import { loadLive2DRuntime, loadLive2DResources } from './runtime.ts';
 import type { Live2DModelHandle } from './types.ts';
 
 export class Live2DCharacterController {
-  constructor(private readonly modelPath: string) {}
+  constructor(
+    private readonly modelPath: string,
+    private readonly onRuntimeError: (message: string) => void = () => undefined
+  ) {}
 
   private handle: Live2DModelHandle | null = null;
   private frameRequest: number | null = null;
@@ -11,6 +14,8 @@ export class Live2DCharacterController {
   private loadGeneration = 0;
   private currentState = 'IDLE';
   private currentExpression = 'NEUTRAL';
+  private motionGroups = new Set<string>();
+  private runtimeFailed = false;
 
   async load(canvas: HTMLCanvasElement): Promise<void> {
     this.dispose();
@@ -26,7 +31,8 @@ export class Live2DCharacterController {
       this.handle = null;
       return;
     }
-    this.handle.playMotion(getMotionGroup(this.currentState));
+    this.motionGroups = new Set(Object.keys(resources.motions));
+    this.playStateMotion(this.currentState);
     this.handle.setExpression(this.currentExpression);
     this.resize(canvas);
     console.info('[live2d:loaded]', modelResourcesSummary(resources));
@@ -35,7 +41,7 @@ export class Live2DCharacterController {
 
   setState(state: string): void {
     this.currentState = state;
-    this.handle?.playMotion(getMotionGroup(state));
+    this.playStateMotion(state);
   }
 
   setExpression(expression: string): void {
@@ -66,6 +72,47 @@ export class Live2DCharacterController {
     this.frameRequest = null;
     this.handle?.dispose();
     this.handle = null;
+    this.motionGroups.clear();
+  }
+
+  private playStateMotion(state: string): void {
+    const requested = getMotionGroup(state);
+    const fallback = this.motionGroups.has(requested)
+      ? requested
+      : this.motionGroups.has('Idle')
+        ? 'Idle'
+        : null;
+    if (fallback === null) {
+      console.error(
+        `[live2d:motion] Model has no '${requested}' or 'Idle' motion group; keeping the model static.`
+      );
+      return;
+    }
+    if (requested !== fallback) {
+      console.error(
+        `[live2d:motion] Missing motion group '${requested}', falling back to '${fallback}'.`
+      );
+    }
+    try {
+      this.handle?.playMotion(fallback);
+    } catch (error) {
+      console.error('[live2d:motion]', {
+        modelPath: this.modelPath,
+        state,
+        group: fallback,
+        error
+      });
+      if (fallback !== 'Idle' && this.motionGroups.has('Idle')) {
+        try {
+          this.handle?.playMotion('Idle');
+          return;
+        } catch (fallbackError) {
+          this.reportRuntimeError('Idle motion fallback', fallbackError);
+          return;
+        }
+      }
+      this.reportRuntimeError('state motion', error);
+    }
   }
 
   private startFrameLoop(canvas: HTMLCanvasElement): void {
@@ -73,12 +120,45 @@ export class Live2DCharacterController {
       if (!this.handle) return;
       const deltaSeconds = this.lastFrame === 0 ? 0 : Math.min(0.1, (time - this.lastFrame) / 1000);
       this.lastFrame = time;
-      this.resize(canvas);
-      this.handle.update({ deltaSeconds, width: canvas.clientWidth, height: canvas.clientHeight });
-      this.handle.draw();
+      try {
+        this.resize(canvas);
+        this.handle.update({
+          deltaSeconds,
+          width: canvas.clientWidth,
+          height: canvas.clientHeight
+        });
+        this.handle.draw();
+      } catch (error) {
+        this.frameRequest = null;
+        this.reportRuntimeError('frame update/draw', error);
+        return;
+      }
       this.frameRequest = requestAnimationFrame(render);
     };
     this.lastFrame = 0;
     this.frameRequest = requestAnimationFrame(render);
+  }
+
+  private reportRuntimeError(phase: string, error: unknown): void {
+    if (this.runtimeFailed) return;
+    this.runtimeFailed = true;
+    const detail =
+      error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error);
+    const message = `Live2D ${phase} failed for state '${this.currentState}' (${this.modelPath}): ${detail}`;
+    console.error('[live2d:runtime-failure]', {
+      phase,
+      modelPath: this.modelPath,
+      state: this.currentState,
+      error
+    });
+    if (this.frameRequest !== null) cancelAnimationFrame(this.frameRequest);
+    this.frameRequest = null;
+    try {
+      this.handle?.dispose();
+    } catch (disposeError) {
+      console.error('[live2d:dispose-after-failure]', disposeError);
+    }
+    this.handle = null;
+    this.onRuntimeError(message);
   }
 }

@@ -25,7 +25,7 @@ export const LIVE2D_MODELS: Live2DModelInfo[] = modelFiles
   .sort((left, right) => left.id.localeCompare(right.id));
 
 export const DEFAULT_LIVE2D_MODEL_ID =
-  LIVE2D_MODELS.find((model) => model.id.includes('/xglk/'))?.id ?? LIVE2D_MODELS[0]?.id ?? '';
+  LIVE2D_MODELS.find((model) => model.id.startsWith('xglk/'))?.id ?? LIVE2D_MODELS[0]?.id ?? '';
 
 export async function validateLive2DModels(
   models: Live2DModelInfo[] = LIVE2D_MODELS,

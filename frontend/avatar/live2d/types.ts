@@ -25,6 +25,7 @@ export type Live2DModelHandle = {
   update(frame: Live2DFrame): void;
   draw(): void;
   playMotion(group: string, index?: number): void;
+  hasMotion?(group: string): boolean;
   stopMotion(): void;
   setExpression(expression: string): void;
   setParameter(id: string, value: number): void;

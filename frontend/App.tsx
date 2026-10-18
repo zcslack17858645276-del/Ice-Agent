@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { AnimationController } from './avatar/animationController';
 import { AvatarRegistry } from './avatar/registry';
 import { StaticAvatarRenderer } from './avatar/renderer';
@@ -10,15 +11,10 @@ import {
   type Live2DModelStatus
 } from './avatar/live2d/catalog';
 import { AvatarStateMachine, type AvatarSnapshot } from './avatar/stateMachine';
-import {
-  AVATAR_EXPRESSIONS,
-  PET_STATES,
-  type AvatarExpression,
-  type PetState
-} from './avatar/types';
+import { PET_STATES, type PetState } from './avatar/types';
 import { WindowService, type AppInfo } from './windowService';
+import { PanelWindow } from './PanelWindow';
 
-type Panel = 'chat' | 'settings' | null;
 type AvatarMode = 'live2d' | 'static';
 type Preferences = {
   characterId: string;
@@ -33,6 +29,7 @@ const defaultPreferences: Preferences = {
   live2dModelId: DEFAULT_LIVE2D_MODEL_ID
 };
 const preferencesKey = 'ice-agent.avatar-preferences.v1';
+const expressionKey = 'ice-agent.avatar-expression.v1';
 
 function readPreferences(): Preferences {
   try {
@@ -66,48 +63,51 @@ function readPreferences(): Preferences {
   return defaultPreferences;
 }
 
-export default function App() {
-  const [panel, setPanel] = useState<Panel>(null);
+function PetApp() {
+  const [menuOpen, setMenuOpen] = useState(false);
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState('');
   const [preferences, setPreferences] = useState(readPreferences);
   const machine = useMemo(() => new AvatarStateMachine(), []);
   const controller = useMemo(() => new AnimationController(), []);
   const [avatar, setAvatar] = useState<AvatarSnapshot>(machine.getSnapshot());
-  const [assetError, setAssetError] = useState<string | null>(null);
   const [assetFailed, setAssetFailed] = useState(false);
   const [live2dReady, setLive2dReady] = useState(false);
-  const [live2dError, setLive2dError] = useState<string | null>(null);
   const [live2dModels, setLive2dModels] = useState<Live2DModelStatus[]>([]);
-  const selectedLive2DModel = live2dModels.find((model) => model.id === preferences.live2dModelId);
-  const selectedLive2DModelPath = selectedLive2DModel
-    ? new URL(`${import.meta.env.BASE_URL}${selectedLive2DModel.id}`, document.baseURI).href
-    : '';
+  const selectedLive2DModel =
+    live2dModels.find((model) => model.id === preferences.live2dModelId) ??
+    LIVE2D_MODELS.find((model) => model.id === preferences.live2dModelId);
+  const selectedLive2DModelPath = selectedLive2DModel?.modelPath ?? '';
   const asset = AvatarRegistry.find(preferences.characterId, avatar.state, avatar.expression);
 
   const onLive2DReady = useCallback(() => {
     setLive2dReady(true);
-    setLive2dError(null);
   }, []);
 
   const onLive2DError = useCallback((messageText: string) => {
     setLive2dReady(false);
-    setLive2dError(messageText);
     console.error('[live2d:runtime]', messageText);
   }, []);
 
   useEffect(() => {
     if (preferences.avatarMode === 'live2d') return;
     setLive2dReady(false);
-    setLive2dError(null);
   }, [preferences.avatarMode]);
 
   useEffect(() => {
     setLive2dReady(false);
-    setLive2dError(null);
   }, [preferences.live2dModelId]);
+
+  useEffect(() => {
+    const close = () => setMenuOpen(false);
+    window.addEventListener('click', close);
+    window.addEventListener('blur', close);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('blur', close);
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -125,6 +125,19 @@ export default function App() {
   }, [preferences]);
 
   useEffect(() => {
+    const syncPanelChanges = (event: StorageEvent) => {
+      if (event.key === preferencesKey) setPreferences(readPreferences());
+      if (event.key === expressionKey && event.newValue) {
+        setAvatar(
+          machine.transition({ type: 'avatar:set_expression', expression: event.newValue })
+        );
+      }
+    };
+    window.addEventListener('storage', syncPanelChanges);
+    return () => window.removeEventListener('storage', syncPanelChanges);
+  }, [machine]);
+
+  useEffect(() => {
     let active = true;
     validateLive2DModels().then((models) => {
       if (active) setLive2dModels(models);
@@ -136,7 +149,6 @@ export default function App() {
 
   useEffect(() => {
     setAssetFailed(false);
-    setAssetError(null);
     const startedAt = performance.now();
     controller
       .preload([asset.src])
@@ -147,7 +159,6 @@ export default function App() {
         })
       )
       .catch((reason: Error) => {
-        setAssetError(reason.message);
         console.error('[avatar:preload]', reason);
       });
   }, [asset.src, controller]);
@@ -185,7 +196,10 @@ export default function App() {
 
   const run = (action: () => Promise<unknown>) => {
     setError(null);
-    action().catch((reason: Error) => setError(reason.message));
+    action().catch((reason: Error) => {
+      setError(reason.message);
+      console.error('[window:command]', reason);
+    });
   };
 
   const transition = (state: PetState) => {
@@ -207,66 +221,19 @@ export default function App() {
     }
   };
 
-  const chooseCharacter = (characterId: string) => {
-    const nextAsset = AvatarRegistry.find(characterId, avatar.state, avatar.expression);
-    const startedAt = performance.now();
-    controller
-      .preload([nextAsset.src])
-      .then(() =>
-        console.info('[avatar:preload]', {
-          characterId: nextAsset.characterId,
-          durationMs: Math.round(performance.now() - startedAt)
-        })
-      )
-      .catch((reason: Error) => {
-        setAssetError(reason.message);
-        console.error('[avatar:preload]', reason);
-      });
-    setPreferences((current) => ({ ...current, characterId }));
-    setAssetFailed(false);
-    setAssetError(null);
-  };
-
-  const setExpression = (expression: AvatarExpression) => {
-    const next = machine.transition({ type: 'avatar:set_expression', expression });
-    console.info('[avatar:expression]', {
-      expression: next.expression,
-      time: new Date(next.changedAt).toISOString()
-    });
-    setAvatar(next);
+  const openPanel = (nextPanel: 'chat' | 'settings') => {
+    setMenuOpen(false);
+    run(() => WindowService.openPanel(nextPanel));
   };
 
   return (
-    <main className="app-shell">
-      <header
-        className="titlebar"
-        data-tauri-drag-region
-        onDoubleClick={() => run(WindowService.minimize)}
-      >
-        <span className="brand-mark" aria-hidden="true">
-          ✦
-        </span>
-        <span className="title">Ice Agent</span>
-        <div className="title-actions">
-          <button
-            className="icon-button"
-            aria-label="Minimize"
-            title="Minimize"
-            onClick={() => run(WindowService.minimize)}
-          >
-            −
-          </button>
-          <button
-            className="icon-button close"
-            aria-label="Close"
-            title="Close"
-            onClick={() => run(WindowService.close)}
-          >
-            ×
-          </button>
-        </div>
-      </header>
-
+    <main
+      className="app-shell desktop-mode"
+      onContextMenu={(event) => {
+        event.preventDefault();
+        setMenuOpen(true);
+      }}
+    >
       {error && (
         <div className="error-banner" role="alert">
           {error}
@@ -276,13 +243,16 @@ export default function App() {
         </div>
       )}
 
-      <section className="pet-stage" data-tauri-drag-region>
+      <section className="pet-stage">
         <div
           className="avatar-display"
           role="img"
           aria-label={`${asset.name} avatar, ${avatar.state.toLowerCase()}`}
+          onPointerDown={(event) => {
+            if (event.button === 0) run(WindowService.drag);
+          }}
         >
-          {preferences.avatarMode === 'live2d' && (
+          {preferences.avatarMode === 'live2d' && selectedLive2DModelPath && (
             <Live2DRenderer
               key={selectedLive2DModelPath || preferences.live2dModelId}
               modelPath={selectedLive2DModelPath}
@@ -309,7 +279,6 @@ export default function App() {
                 animationEnabled={preferences.animationEnabled}
                 onAssetError={(messageText) => {
                   setAssetFailed(true);
-                  setAssetError(messageText);
                   console.error('[avatar:asset]', messageText);
                 }}
               />
@@ -339,162 +308,64 @@ export default function App() {
         </div>
       </section>
 
-      {panel === 'chat' && (
-        <section className="panel chat-panel" aria-label="Chat panel">
-          <div className="panel-heading">
-            <h2>Chat</h2>
-            <button className="text-button" onClick={() => setPanel(null)}>
-              Close
-            </button>
-          </div>
-          <div className="empty-state">
-            <span className="empty-icon">◌</span>
-            <strong>No messages yet</strong>
-            <span>Conversation will be available in a future phase.</span>
-          </div>
-          <form
-            className="chat-input"
-            onSubmit={(event) => {
-              event.preventDefault();
-              setMessage('');
+      {menuOpen && (
+        <nav
+          className="context-menu"
+          aria-label="Pet menu"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button onClick={() => openPanel('chat')}>
+            <span aria-hidden="true">💬</span> Chat
+          </button>
+          <button
+            onClick={() => {
+              setMenuOpen(false);
+              run(WindowService.drag);
             }}
           >
-            <input
-              value={message}
-              onChange={(event) => setMessage(event.target.value)}
-              placeholder="Write a message"
-              aria-label="Message"
-            />
-            <button aria-label="Send message" title="Send message" disabled={!message.trim()}>
-              ➤
-            </button>
-          </form>
-        </section>
+            <span aria-hidden="true">✥</span> Move
+          </button>
+          <div className="context-menu-group">
+            <span>
+              <span aria-hidden="true">◈</span> States
+            </span>
+            {PET_STATES.map((state) => (
+              <button
+                key={state}
+                className="context-state"
+                onClick={() => {
+                  setMenuOpen(false);
+                  transition(state);
+                }}
+              >
+                {state[0] + state.slice(1).toLowerCase()}
+              </button>
+            ))}
+          </div>
+          <button onClick={() => openPanel('settings')}>
+            <span aria-hidden="true">⚙</span> Settings
+          </button>
+          <button
+            className="danger"
+            onClick={() => {
+              setMenuOpen(false);
+              run(WindowService.close);
+            }}
+          >
+            <span aria-hidden="true">×</span> Exit
+          </button>
+        </nav>
       )}
-
-      {panel === 'settings' && (
-        <section className="panel settings-panel" aria-label="Settings panel">
-          <div className="panel-heading">
-            <h2>Settings</h2>
-            <button className="text-button" onClick={() => setPanel(null)}>
-              Close
-            </button>
-          </div>
-          <label className="setting-row" htmlFor="character-select">
-            <span>Character</span>
-            <select
-              id="character-select"
-              value={preferences.characterId}
-              onChange={(event) => chooseCharacter(event.target.value)}
-            >
-              {AvatarRegistry.list().map((character) => (
-                <option key={character.characterId} value={character.characterId}>
-                  {character.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="setting-row" htmlFor="live2d-model">
-            <span>Live2D model</span>
-            <select
-              id="live2d-model"
-              value={preferences.live2dModelId}
-              onChange={(event) =>
-                setPreferences((current) => ({ ...current, live2dModelId: event.target.value }))
-              }
-            >
-              {live2dModels.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.name}
-                  {model.error ? ' (invalid)' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="setting-row" htmlFor="animation-toggle">
-            <span>Animations</span>
-            <input
-              id="animation-toggle"
-              type="checkbox"
-              checked={preferences.animationEnabled}
-              onChange={(event) =>
-                setPreferences((current) => ({
-                  ...current,
-                  animationEnabled: event.target.checked
-                }))
-              }
-            />
-          </label>
-          <label className="setting-row" htmlFor="avatar-mode">
-            <span>Avatar display</span>
-            <select
-              id="avatar-mode"
-              value={preferences.avatarMode}
-              onChange={(event) =>
-                setPreferences((current) => ({
-                  ...current,
-                  avatarMode: event.target.value as AvatarMode
-                }))
-              }
-              aria-label="Avatar display mode"
-            >
-              <option value="live2d">Live2D</option>
-              <option value="static">Static PNG</option>
-            </select>
-          </label>
-          <div className="setting-row" aria-label="Expression">
-            <span>Expression</span>
-            <select
-              value={avatar.expression}
-              onChange={(event) => setExpression(event.target.value as AvatarExpression)}
-            >
-              {AVATAR_EXPRESSIONS.map((expression) => (
-                <option key={expression} value={expression}>
-                  {expression[0] + expression.slice(1).toLowerCase()}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="setting-row">
-            <span>Current state</span>
-            <span className="setting-value">{avatar.state}</span>
-          </div>
-          {assetError && (
-            <div className="asset-error" role="alert">
-              {assetError}
-            </div>
-          )}
-          {live2dError && (
-            <div className="asset-error" role="status">
-              Live2D fallback: {live2dError}
-            </div>
-          )}
-          {selectedLive2DModel?.error && (
-            <div className="asset-error" role="alert">
-              Model resource error: {selectedLive2DModel.error}
-            </div>
-          )}
-          <div className="license-note">{asset.license.license}</div>
-        </section>
-      )}
-
-      <footer className="toolbar">
-        <button
-          className={panel === 'chat' ? 'tool active' : 'tool'}
-          onClick={() => setPanel(panel === 'chat' ? null : 'chat')}
-        >
-          <span>◌</span>Chat
-        </button>
-        <button className="tool" onClick={() => run(WindowService.drag)}>
-          <span>✥</span>Move
-        </button>
-        <button
-          className={panel === 'settings' ? 'tool active' : 'tool'}
-          onClick={() => setPanel(panel === 'settings' ? null : 'settings')}
-        >
-          <span>⚙</span>Settings
-        </button>
-      </footer>
     </main>
   );
+}
+
+export default function App() {
+  const queryPanel = new URLSearchParams(window.location.search).get('panel');
+  const windowLabel = getCurrentWindow().label;
+  const panel =
+    queryPanel ??
+    (windowLabel === 'panel-chat' ? 'chat' : windowLabel === 'panel-settings' ? 'settings' : null);
+  if (panel === 'chat' || panel === 'settings') return <PanelWindow kind={panel} />;
+  return <PetApp />;
 }
