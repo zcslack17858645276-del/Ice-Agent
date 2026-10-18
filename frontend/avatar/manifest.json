@@ -39,18 +39,15 @@
     }
   ],
   "live2d": {
-    "modelPath": "assets/live2d/seethrough_output_1.model3.json",
-    "requiredFiles": [
-      "seethrough_output_1.model3.json",
-      "seethrough_output_1.moc3",
-      "seethrough_output_1.physics3.json",
-      "seethrough_output_1.cdi3.json",
-      "seethrough_output_1.4096/texture_00.png",
-      "seethrough_output_1.idle.motion3.json",
-      "seethrough_output_1.blink.motion3.json",
-      "seethrough_output_1.nod.motion3.json",
-      "seethrough_output_1.shake.motion3.json"
-    ],
-    "runtime": "Cubism SDK runtime is intentionally not bundled in Phase 1"
+    "modelDirectories": ["assets/xglk", "assets/miku_free", "assets/miku_pro"],
+    "runtime": {
+      "provider": "frontend/avatar/live2d/cubismAdapter.ts",
+      "files": [
+        "assets/xglk/runtime/live2dcubismcore.min.js",
+        "assets/xglk/runtime/shaders/WebGL/",
+        "CubismSdkForWeb/CubismSdkForWeb-5-r.5/Framework/src/"
+      ],
+      "status": "integrated from official Cubism SDK for Web 5-r.5"
+    }
   }
 }

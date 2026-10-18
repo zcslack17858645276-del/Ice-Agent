@@ -3,6 +3,9 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath, URL } from 'node:url';
 import test from 'node:test';
 import { AvatarStateMachine } from './stateMachine.ts';
+import { discoverLive2DModels } from './live2d/catalogCore.mjs';
+import { getMotionGroup, resolveModelResource } from './live2d/model.ts';
+import { loadLive2DResources, validateLive2DModel } from './live2d/runtime.ts';
 
 test('temporary state returns to the last stable state', () => {
   const machine = new AvatarStateMachine();
@@ -70,25 +73,147 @@ test('manifest references present PNG assets and records license status', async 
   }
 });
 
-test('bundled Live2D model references are complete', async () => {
-  const manifestUrl = new URL('./manifest.json', import.meta.url);
-  const manifest = JSON.parse(await readFile(manifestUrl, 'utf8'));
-  const root = new URL('../../', manifestUrl);
-  for (const relativePath of manifest.live2d.requiredFiles) {
-    const filePath = fileURLToPath(new URL(`assets/live2d/${relativePath}`, root));
-    const bytes = await readFile(filePath);
-    assert.ok(bytes.length > 0, relativePath);
-  }
-  const modelPath = fileURLToPath(
-    new URL(`assets/live2d/${manifest.live2d.modelPath.split('/').slice(2).join('/')}`, root)
-  );
-  const model = JSON.parse(await readFile(modelPath, 'utf8'));
-  assert.equal(model.FileReferences.Moc, 'seethrough_output_1.moc3');
-  assert.equal(model.FileReferences.Textures.length, 1);
-  assert.deepEqual(Object.keys(model.FileReferences.Motions).sort(), [
-    'Blink',
-    'Idle',
-    'Nod',
-    'Shake'
+test('model discovery includes only model entries in designated asset directories', () => {
+  const files = [
+    'xglk/renamed.model3.json',
+    'miku_free/runtime/miku.model3.json',
+    'miku_pro/runtime/miku_sample_t04.model3.json',
+    'xglk/runtime/shaders/config.json',
+    'other/model.model3.json',
+    'xglk/not-a-model.json'
+  ];
+  assert.deepEqual(discoverLive2DModels(files), [
+    'miku_free/runtime/miku.model3.json',
+    'miku_pro/runtime/miku_sample_t04.model3.json',
+    'xglk/renamed.model3.json'
   ]);
+});
+
+test('Live2D model entries and every configured resource are present', async () => {
+  const root = new URL('../../assets/', import.meta.url);
+  const modelFiles = [
+    'xglk/seethrough_output_1.model3.json',
+    'miku_free/runtime/miku.model3.json',
+    'miku_pro/runtime/miku_sample_t04.model3.json'
+  ];
+  for (const modelFile of modelFiles) {
+    const modelUrl = new URL(modelFile, root);
+    const fetcher = async (url) => {
+      try {
+        const bytes = await readFile(fileURLToPath(url));
+        return new globalThis.Response(bytes, { status: 200 });
+      } catch {
+        return new globalThis.Response(null, { status: 404 });
+      }
+    };
+    await validateLive2DModel(modelUrl.href, fetcher);
+    const resources = await loadLive2DResources(modelUrl.href, fetcher);
+    assert.ok(resources.moc.byteLength > 0);
+    assert.ok(resources.texturePaths.length > 0);
+  }
+  const xglkUrl = new URL(modelFiles[0], root);
+  const xglkFetcher = async (url) =>
+    new globalThis.Response(await readFile(fileURLToPath(url)), { status: 200 });
+  const resources = await loadLive2DResources(xglkUrl.href, xglkFetcher);
+  assert.ok(resources.physics);
+  assert.deepEqual(Object.keys(resources.motions).sort(), ['Blink', 'Idle', 'Nod', 'Shake']);
+  assert.equal(getMotionGroup('IDLE'), 'Idle');
+  assert.equal(getMotionGroup('THINKING'), 'Nod');
+  assert.equal(getMotionGroup('HAPPY'), 'Shake');
+});
+
+test('renamed entry resolves resources against its configured model directory', async () => {
+  const entryUrl = 'https://models.test/xglk/renamed.model3.json';
+  const originalResourceBase = 'https://models.test/xglk/seethrough_output_1.model3.json';
+  const model = JSON.parse(
+    await readFile(
+      new URL('../../assets/xglk/seethrough_output_1.model3.json', import.meta.url),
+      'utf8'
+    )
+  );
+  const requested = [];
+  const fetcher = async (url) => {
+    requested.push(url);
+    const relative = new URL(url).pathname.replace('/xglk/', '');
+    if (relative === 'renamed.model3.json') {
+      return new globalThis.Response(JSON.stringify(model), { status: 200 });
+    }
+    const bytes = await readFile(
+      fileURLToPath(new URL(`../../assets/xglk/${relative}`, import.meta.url))
+    );
+    return new globalThis.Response(bytes, { status: 200 });
+  };
+  const resources = await loadLive2DResources(entryUrl, fetcher, originalResourceBase);
+  assert.equal(resources.modelPath, entryUrl);
+  assert.ok(requested.includes('https://models.test/xglk/seethrough_output_1.moc3'));
+  assert.equal(
+    resolveModelResource(originalResourceBase, model.FileReferences.Textures[0]),
+    'https://models.test/xglk/seethrough_output_1.4096/texture_00.png'
+  );
+});
+
+test('required model resources fail clearly while optional sections may be absent', async () => {
+  const modelUrl = 'https://models.test/models/renamed.model3.json';
+  const model = {
+    FileReferences: { Moc: 'body.moc3', Textures: ['textures/body.png'] }
+  };
+  const resources = new Map([
+    [modelUrl, JSON.stringify(model)],
+    ['https://models.test/models/body.moc3', new Uint8Array([1])],
+    ['https://models.test/models/textures/body.png', new Uint8Array([2])]
+  ]);
+  const fetcher = async (url) => {
+    const value = resources.get(url);
+    return value === undefined
+      ? new globalThis.Response(null, { status: 404 })
+      : new globalThis.Response(value, { status: 200 });
+  };
+  await validateLive2DModel(modelUrl, fetcher);
+  const loaded = await loadLive2DResources(modelUrl, fetcher);
+  assert.equal(loaded.physics, null);
+  assert.deepEqual(loaded.motions, {});
+  assert.deepEqual(loaded.expressions, {});
+
+  resources.delete('https://models.test/models/body.moc3');
+  await assert.rejects(validateLive2DModel(modelUrl, fetcher), /required resource.*body\.moc3/);
+  await assert.rejects(loadLive2DResources(modelUrl, fetcher), /failed to load.*body\.moc3/);
+});
+
+test('configured physics, motions, and expressions resolve relatively and missing files fail', async () => {
+  const modelUrl = 'https://models.test/pack/renamed.model3.json';
+  const model = {
+    FileReferences: {
+      Moc: 'model.moc3',
+      Textures: ['tex.png'],
+      Physics: 'settings/physics.json',
+      Motions: { Idle: [{ File: 'motions/idle.motion3.json' }] },
+      Expressions: [{ Name: 'Happy', File: 'expressions/happy.exp3.json' }]
+    }
+  };
+  const data = new Map([
+    [modelUrl, JSON.stringify(model)],
+    ['https://models.test/pack/model.moc3', new Uint8Array([1])],
+    ['https://models.test/pack/tex.png', new Uint8Array([2])],
+    ['https://models.test/pack/settings/physics.json', JSON.stringify({ Version: 3 })],
+    ['https://models.test/pack/motions/idle.motion3.json', JSON.stringify({ Meta: {} })],
+    ['https://models.test/pack/expressions/happy.exp3.json', JSON.stringify({ Parameters: [] })]
+  ]);
+  const fetcher = async (url) => {
+    const body = data.get(url);
+    return body === undefined
+      ? new globalThis.Response(null, { status: 404 })
+      : new globalThis.Response(body, { status: 200 });
+  };
+  const loaded = await loadLive2DResources(modelUrl, fetcher);
+  assert.equal(loaded.physicsPath, 'https://models.test/pack/settings/physics.json');
+  assert.equal(loaded.motions.Idle[0].path, 'https://models.test/pack/motions/idle.motion3.json');
+  assert.equal(
+    loaded.expressions.Happy.path,
+    'https://models.test/pack/expressions/happy.exp3.json'
+  );
+  data.delete('https://models.test/pack/expressions/happy.exp3.json');
+  await assert.rejects(
+    validateLive2DModel(modelUrl, fetcher),
+    /required resource.*happy\.exp3\.json/
+  );
 });

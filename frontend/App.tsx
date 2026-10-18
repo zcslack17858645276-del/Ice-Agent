@@ -1,7 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimationController } from './avatar/animationController';
 import { AvatarRegistry } from './avatar/registry';
 import { StaticAvatarRenderer } from './avatar/renderer';
+import { Live2DRenderer } from './avatar/live2d/renderer';
+import {
+  DEFAULT_LIVE2D_MODEL_ID,
+  LIVE2D_MODELS,
+  validateLive2DModels,
+  type Live2DModelStatus
+} from './avatar/live2d/catalog';
 import { AvatarStateMachine, type AvatarSnapshot } from './avatar/stateMachine';
 import {
   AVATAR_EXPRESSIONS,
@@ -12,8 +19,19 @@ import {
 import { WindowService, type AppInfo } from './windowService';
 
 type Panel = 'chat' | 'settings' | null;
-type Preferences = { characterId: string; animationEnabled: boolean };
-const defaultPreferences: Preferences = { characterId: 'xglk', animationEnabled: true };
+type AvatarMode = 'live2d' | 'static';
+type Preferences = {
+  characterId: string;
+  animationEnabled: boolean;
+  avatarMode: AvatarMode;
+  live2dModelId: string;
+};
+const defaultPreferences: Preferences = {
+  characterId: 'xglk',
+  animationEnabled: true,
+  avatarMode: 'live2d',
+  live2dModelId: DEFAULT_LIVE2D_MODEL_ID
+};
 const preferencesKey = 'ice-agent.avatar-preferences.v1';
 
 function readPreferences(): Preferences {
@@ -31,7 +49,16 @@ function readPreferences(): Preferences {
       )
         ? String(stored.characterId)
         : defaultPreferences.characterId;
-      return { characterId, animationEnabled: stored.animationEnabled === true };
+      return {
+        characterId,
+        animationEnabled: stored.animationEnabled === true,
+        avatarMode: stored.avatarMode === 'static' ? 'static' : 'live2d',
+        live2dModelId:
+          typeof stored.live2dModelId === 'string' &&
+          LIVE2D_MODELS.some((model) => model.id === stored.live2dModelId)
+            ? stored.live2dModelId
+            : defaultPreferences.live2dModelId
+      };
     }
   } catch {
     return defaultPreferences;
@@ -51,7 +78,36 @@ export default function App() {
   const [avatar, setAvatar] = useState<AvatarSnapshot>(machine.getSnapshot());
   const [assetError, setAssetError] = useState<string | null>(null);
   const [assetFailed, setAssetFailed] = useState(false);
+  const [live2dReady, setLive2dReady] = useState(false);
+  const [live2dError, setLive2dError] = useState<string | null>(null);
+  const [live2dModels, setLive2dModels] = useState<Live2DModelStatus[]>([]);
+  const selectedLive2DModel = live2dModels.find((model) => model.id === preferences.live2dModelId);
+  const selectedLive2DModelPath = selectedLive2DModel
+    ? new URL(`${import.meta.env.BASE_URL}${selectedLive2DModel.id}`, document.baseURI).href
+    : '';
   const asset = AvatarRegistry.find(preferences.characterId, avatar.state, avatar.expression);
+
+  const onLive2DReady = useCallback(() => {
+    setLive2dReady(true);
+    setLive2dError(null);
+  }, []);
+
+  const onLive2DError = useCallback((messageText: string) => {
+    setLive2dReady(false);
+    setLive2dError(messageText);
+    console.error('[live2d:runtime]', messageText);
+  }, []);
+
+  useEffect(() => {
+    if (preferences.avatarMode === 'live2d') return;
+    setLive2dReady(false);
+    setLive2dError(null);
+  }, [preferences.avatarMode]);
+
+  useEffect(() => {
+    setLive2dReady(false);
+    setLive2dError(null);
+  }, [preferences.live2dModelId]);
 
   useEffect(() => {
     let active = true;
@@ -67,6 +123,16 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(preferencesKey, JSON.stringify(preferences));
   }, [preferences]);
+
+  useEffect(() => {
+    let active = true;
+    validateLive2DModels().then((models) => {
+      if (active) setLive2dModels(models);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     setAssetFailed(false);
@@ -216,26 +282,38 @@ export default function App() {
           role="img"
           aria-label={`${asset.name} avatar, ${avatar.state.toLowerCase()}`}
         >
-          {assetFailed ? (
-            <div
-              className={`avatar-fallback state-${avatar.state.toLowerCase()}`}
-              aria-hidden="true"
-            >
-              <span>✦</span>
-            </div>
-          ) : (
-            <StaticAvatarRenderer
+          {preferences.avatarMode === 'live2d' && (
+            <Live2DRenderer
+              key={selectedLive2DModelPath || preferences.live2dModelId}
+              modelPath={selectedLive2DModelPath}
               state={avatar.state}
               expression={avatar.expression}
-              asset={asset}
-              animationEnabled={preferences.animationEnabled}
-              onAssetError={(messageText) => {
-                setAssetFailed(true);
-                setAssetError(messageText);
-                console.error('[avatar:asset]', messageText);
-              }}
+              visible={live2dReady}
+              onReady={onLive2DReady}
+              onError={onLive2DError}
             />
           )}
+          {(preferences.avatarMode === 'static' || !live2dReady) &&
+            (assetFailed ? (
+              <div
+                className={`avatar-fallback state-${avatar.state.toLowerCase()}`}
+                aria-hidden="true"
+              >
+                <span>✦</span>
+              </div>
+            ) : (
+              <StaticAvatarRenderer
+                state={avatar.state}
+                expression={avatar.expression}
+                asset={asset}
+                animationEnabled={preferences.animationEnabled}
+                onAssetError={(messageText) => {
+                  setAssetFailed(true);
+                  setAssetError(messageText);
+                  console.error('[avatar:asset]', messageText);
+                }}
+              />
+            ))}
         </div>
         <h1>{asset.name}</h1>
         <p className="state-label">
@@ -316,6 +394,23 @@ export default function App() {
               ))}
             </select>
           </label>
+          <label className="setting-row" htmlFor="live2d-model">
+            <span>Live2D model</span>
+            <select
+              id="live2d-model"
+              value={preferences.live2dModelId}
+              onChange={(event) =>
+                setPreferences((current) => ({ ...current, live2dModelId: event.target.value }))
+              }
+            >
+              {live2dModels.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                  {model.error ? ' (invalid)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="setting-row" htmlFor="animation-toggle">
             <span>Animations</span>
             <input
@@ -329,6 +424,23 @@ export default function App() {
                 }))
               }
             />
+          </label>
+          <label className="setting-row" htmlFor="avatar-mode">
+            <span>Avatar display</span>
+            <select
+              id="avatar-mode"
+              value={preferences.avatarMode}
+              onChange={(event) =>
+                setPreferences((current) => ({
+                  ...current,
+                  avatarMode: event.target.value as AvatarMode
+                }))
+              }
+              aria-label="Avatar display mode"
+            >
+              <option value="live2d">Live2D</option>
+              <option value="static">Static PNG</option>
+            </select>
           </label>
           <div className="setting-row" aria-label="Expression">
             <span>Expression</span>
@@ -350,6 +462,16 @@ export default function App() {
           {assetError && (
             <div className="asset-error" role="alert">
               {assetError}
+            </div>
+          )}
+          {live2dError && (
+            <div className="asset-error" role="status">
+              Live2D fallback: {live2dError}
+            </div>
+          )}
+          {selectedLive2DModel?.error && (
+            <div className="asset-error" role="alert">
+              Model resource error: {selectedLive2DModel.error}
             </div>
           )}
           <div className="license-note">{asset.license.license}</div>

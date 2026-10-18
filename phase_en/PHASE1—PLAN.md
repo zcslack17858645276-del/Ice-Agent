@@ -73,6 +73,6 @@ Give the desktop pet replaceable visual assets, basic animations, expressions, a
 - Implemented: typed avatar contracts, versioned manifest and registry, state machine, animation/preload controller, static renderer adapter, six visible state presentations, expression switching, fallback display, settings persistence, and focused state/manifest tests.
 - Verification gap: component-level automated tests have not been added; behavior is covered by the state-machine and asset-manifest tests plus production build checks.
 - Asset verification: two transparent RGBA portraits are now registered and selectable; the manifest records dimensions and byte sizes for both.
-- Live2D verification: the model, moc3, texture, physics, display-info, and four motion files are present and tested. The Cubism SDK runtime itself is not included; adding `live2dcubismcore` and the Cubism Framework remains the integration prerequisite for a real Live2D renderer.
+- Live2D verification: Phase 1.1 integrates Cubism 5-r.5, discovers model entries under the designated `assets/xglk`, `assets/miku_free`, and `assets/miku_pro` directories, and validates resources referenced by each model configuration. Automated model/resource tests and production build pass. Headless browser startup and resource responses are verified; desktop visual motion, physics, and Tauri transparent-window behavior remain manual verification items.
 - Manual Windows checks remain: transparent window behavior, DPI scaling, frame rate, and long-running animation loops.
 
