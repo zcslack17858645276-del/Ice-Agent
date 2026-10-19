@@ -1,5 +1,14 @@
 # Phase 3: Memory System Plan
 
+## Implementation Status
+
+- [x] Versioned schema, migration contract, repository validation, soft/hard deletion, and export.
+- [x] Short-term message retrieval with time, conversation, and token-budget filtering.
+- [x] Reviewed memory extraction for preferences, events, and habits with sensitive-data exclusion.
+- [x] Model-versioned vector adapter with structured fallback and context assembly.
+- [x] Settings controls for listing, export, deletion, and clear-all.
+- [ ] Native SQLite runtime adapter: the current offline webview adapter is replaceable; native SQLite wiring remains a follow-up when the desktop storage dependency is approved and vendored.
+
 ## Goal
 
 Save short-term conversations and selected long-term information so the desktop pet can reliably use user preferences, important events, and usage habits in later sessions.

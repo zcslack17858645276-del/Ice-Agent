@@ -1,3 +1,4 @@
+use rusqlite::Connection;
 use serde::Deserialize;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
@@ -27,6 +28,21 @@ impl std::fmt::Display for CommandError {
 }
 
 const CREDENTIAL_SERVICE: &str = "com.iceagent.desktop";
+
+#[tauri::command(rename = "memory:initialize")]
+fn memory_initialize(app: AppHandle) -> Result<(), CommandError> {
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| CommandError::Configuration(error.to_string()))?;
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| CommandError::Configuration(error.to_string()))?;
+    let database = directory.join("memory.sqlite3");
+    let connection = Connection::open(database).map_err(|error| {
+        CommandError::Configuration(format!("Unable to open memory database: {error}"))
+    })?;
+    connection.execute_batch("BEGIN; CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER); CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id), role TEXT NOT NULL CHECK(role IN ('system','user','assistant')), content TEXT NOT NULL, created_at INTEGER NOT NULL, incomplete INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER); CREATE INDEX IF NOT EXISTS messages_conversation_time ON messages(conversation_id, created_at); CREATE TABLE IF NOT EXISTS memories (id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('preference','event','habit')), content TEXT NOT NULL, source_message_id TEXT NOT NULL REFERENCES messages(id), confidence REAL NOT NULL, privacy TEXT NOT NULL CHECK(privacy IN ('private','normal','sensitive')), status TEXT NOT NULL CHECK(status IN ('pending','confirmed','rejected','deleted')), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER, embedding_model TEXT); CREATE TABLE IF NOT EXISTS memory_tags (memory_id TEXT NOT NULL REFERENCES memories(id), tag TEXT NOT NULL, PRIMARY KEY(memory_id, tag)); CREATE TABLE IF NOT EXISTS memory_embeddings (memory_id TEXT PRIMARY KEY REFERENCES memories(id), model_version TEXT NOT NULL, vector_json TEXT NOT NULL, updated_at INTEGER NOT NULL); INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, strftime('%s','now') * 1000); COMMIT;").map_err(|error| CommandError::Configuration(format!("Memory migration failed and was rolled back: {error}")))
+}
 
 fn credential(key: &str) -> Result<keyring::Entry, CommandError> {
     keyring::Entry::new(CREDENTIAL_SERVICE, key)
@@ -341,7 +357,8 @@ pub fn run() {
             secure_store_set,
             secure_store_remove,
             ai_test_connection,
-            ai_stream
+            ai_stream,
+            memory_initialize
         ])
         .run(tauri::generate_context!())
         .expect("error while running Ice Agent");
