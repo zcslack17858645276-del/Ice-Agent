@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
@@ -8,15 +9,178 @@ const MAIN_WINDOW: &str = "main";
 pub enum CommandError {
     WindowUnavailable(String),
     WindowOperation(String),
+    Configuration(String),
+    Credential(String),
+    Network(String),
 }
 
 impl std::fmt::Display for CommandError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::WindowUnavailable(message) | Self::WindowOperation(message) => {
-                formatter.write_str(message)
-            }
+            Self::WindowUnavailable(message)
+            | Self::WindowOperation(message)
+            | Self::Configuration(message)
+            | Self::Credential(message)
+            | Self::Network(message) => formatter.write_str(message),
         }
+    }
+}
+
+const CREDENTIAL_SERVICE: &str = "com.iceagent.desktop";
+
+fn credential(key: &str) -> Result<keyring::Entry, CommandError> {
+    keyring::Entry::new(CREDENTIAL_SERVICE, key)
+        .map_err(|_| CommandError::Credential("Secure credential storage is unavailable.".into()))
+}
+
+#[tauri::command(rename = "secure_store_get")]
+fn secure_store_get(key: String) -> Result<Option<String>, CommandError> {
+    match credential(&key)?.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(_) => Err(CommandError::Credential(
+            "Unable to read secure credentials.".into(),
+        )),
+    }
+}
+
+#[tauri::command(rename = "secure_store_set")]
+fn secure_store_set(key: String, value: String) -> Result<(), CommandError> {
+    if value.trim().is_empty() {
+        return Err(CommandError::Configuration(
+            "API key cannot be empty.".into(),
+        ));
+    }
+    credential(&key)?
+        .set_password(&value)
+        .map_err(|_| CommandError::Credential("Unable to save secure credentials.".into()))
+}
+
+#[tauri::command(rename = "secure_store_remove")]
+fn secure_store_remove(key: String) -> Result<(), CommandError> {
+    credential(&key)?
+        .delete_credential()
+        .map_err(|_| CommandError::Credential("Unable to remove secure credentials.".into()))
+}
+
+#[derive(Debug, Deserialize)]
+struct ConnectionConfig {
+    base_url: String,
+    model: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatRequest {
+    base_url: String,
+    model: String,
+    temperature: f32,
+    max_output_tokens: u32,
+    messages: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize)]
+struct BackendChunk {
+    delta: String,
+    done: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    finish_reason: Option<String>,
+}
+
+#[tauri::command(rename = "ai:stream")]
+async fn ai_stream(request: ChatRequest) -> Result<Vec<BackendChunk>, CommandError> {
+    let key = secure_store_get("deepseek_api_key".into())?.ok_or_else(|| {
+        CommandError::Configuration(
+            "Configure an API key in Chat Configuration before sending a message.".into(),
+        )
+    })?;
+    let base = request
+        .base_url
+        .trim_end_matches('/')
+        .trim_end_matches("/chat/completions");
+    if !(base.starts_with("https://") || base.starts_with("http://"))
+        || request.model.trim().is_empty()
+    {
+        return Err(CommandError::Configuration(
+            "Enter a valid base URL and model name.".into(),
+        ));
+    }
+    let response = reqwest::Client::new().post(format!("{base}/chat/completions")).bearer_auth(key).timeout(std::time::Duration::from_secs(30)).json(&serde_json::json!({"model": request.model, "messages": request.messages, "temperature": request.temperature, "max_tokens": request.max_output_tokens, "stream": true})).send().await.map_err(|_| CommandError::Network("Unable to reach the AI service.".into()))?;
+    if response.status().as_u16() == 429 {
+        return Err(CommandError::Network(
+            "The AI service is rate limited. Please try again shortly.".into(),
+        ));
+    }
+    if !response.status().is_success() {
+        return Err(CommandError::Network(
+            "The AI service rejected the request.".into(),
+        ));
+    }
+    let body = response
+        .text()
+        .await
+        .map_err(|_| CommandError::Network("Unable to read the AI response.".into()))?;
+    let mut chunks = Vec::new();
+    for line in body.lines().filter(|line| line.starts_with("data:")) {
+        let payload = line.trim_start_matches("data:").trim();
+        if payload == "[DONE]" {
+            chunks.push(BackendChunk {
+                delta: String::new(),
+                done: true,
+                finish_reason: None,
+            });
+            continue;
+        }
+        let parsed: serde_json::Value = serde_json::from_str(payload)
+            .map_err(|_| CommandError::Network("The AI service returned malformed data.".into()))?;
+        let choice = parsed.get("choices").and_then(|value| value.get(0));
+        let delta = choice
+            .and_then(|value| value.get("delta"))
+            .and_then(|value| value.get("content"))
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_owned();
+        let finish = choice
+            .and_then(|value| value.get("finish_reason"))
+            .and_then(|value| value.as_str())
+            .map(str::to_owned);
+        if !delta.is_empty() || finish.is_some() {
+            chunks.push(BackendChunk {
+                delta,
+                done: finish.is_some(),
+                finish_reason: finish,
+            });
+        }
+    }
+    Ok(chunks)
+}
+
+#[tauri::command(rename = "ai:test_connection")]
+async fn ai_test_connection(config: ConnectionConfig) -> Result<(), CommandError> {
+    let key = secure_store_get("deepseek_api_key".into())?.ok_or_else(|| {
+        CommandError::Configuration("Configure an API key before testing the connection.".into())
+    })?;
+    let base = config
+        .base_url
+        .trim_end_matches('/')
+        .trim_end_matches("/chat/completions");
+    if !(base.starts_with("https://") || base.starts_with("http://"))
+        || config.model.trim().is_empty()
+    {
+        return Err(CommandError::Configuration(
+            "Enter a valid base URL and model name.".into(),
+        ));
+    }
+    let response = reqwest::Client::new().post(format!("{base}/chat/completions")).bearer_auth(key).timeout(std::time::Duration::from_secs(15)).json(&serde_json::json!({"model": config.model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1})).send().await.map_err(|_| CommandError::Network("Unable to reach the AI service.".into()))?;
+    if response.status().is_success() {
+        Ok(())
+    } else if response.status().as_u16() == 429 {
+        Err(CommandError::Network(
+            "The AI service is rate limited.".into(),
+        ))
+    } else {
+        Err(CommandError::Network(
+            "The AI service rejected the connection test.".into(),
+        ))
     }
 }
 
@@ -91,6 +255,7 @@ async fn window_open_panel(app: AppHandle, panel: String) -> Result<(), CommandE
     let (label, title) = match panel.as_str() {
         "chat" => ("panel-chat", "Ice Agent Chat"),
         "settings" => ("panel-settings", "Ice Agent Settings"),
+        "chat-config" => ("panel-chat-config", "Chat Configuration"),
         _ => {
             return Err(CommandError::WindowOperation(
                 "Unknown panel requested.".into(),
@@ -148,6 +313,20 @@ fn app_get_info() -> AppInfo {
 
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+                if let Some(monitor) = window.current_monitor()? {
+                    let scale_factor = monitor.scale_factor();
+                    let logical_height = monitor.size().height as f64 / scale_factor;
+                    window.set_min_size(Some(tauri::LogicalSize::new(220.0, 1.0)))?;
+                    window.set_size(tauri::LogicalSize::new(
+                        280.0,
+                        (logical_height * 3.0 / 8.0).round(),
+                    ))?;
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             window_show,
             window_hide,
@@ -157,7 +336,12 @@ pub fn run() {
             window_minimize,
             window_drag,
             window_open_panel,
-            app_get_info
+            app_get_info,
+            secure_store_get,
+            secure_store_set,
+            secure_store_remove,
+            ai_test_connection,
+            ai_stream
         ])
         .run(tauri::generate_context!())
         .expect("error while running Ice Agent");

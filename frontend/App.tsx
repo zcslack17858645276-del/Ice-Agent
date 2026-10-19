@@ -1,32 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { AnimationController } from './avatar/animationController';
 import { AvatarRegistry } from './avatar/registry';
 import { StaticAvatarRenderer } from './avatar/renderer';
-import { Live2DRenderer } from './avatar/live2d/renderer';
-import {
-  DEFAULT_LIVE2D_MODEL_ID,
-  LIVE2D_MODELS,
-  validateLive2DModels,
-  type Live2DModelStatus
-} from './avatar/live2d/catalog';
 import { AvatarStateMachine, type AvatarSnapshot } from './avatar/stateMachine';
 import { PET_STATES, type PetState } from './avatar/types';
 import { WindowService, type AppInfo } from './windowService';
 import { PanelWindow } from './PanelWindow';
 
-type AvatarMode = 'live2d' | 'static';
 type Preferences = {
   characterId: string;
   animationEnabled: boolean;
-  avatarMode: AvatarMode;
-  live2dModelId: string;
 };
 const defaultPreferences: Preferences = {
   characterId: 'xglk',
-  animationEnabled: true,
-  avatarMode: 'live2d',
-  live2dModelId: DEFAULT_LIVE2D_MODEL_ID
+  animationEnabled: true
 };
 const preferencesKey = 'ice-agent.avatar-preferences.v1';
 const expressionKey = 'ice-agent.avatar-expression.v1';
@@ -48,13 +36,7 @@ function readPreferences(): Preferences {
         : defaultPreferences.characterId;
       return {
         characterId,
-        animationEnabled: stored.animationEnabled === true,
-        avatarMode: stored.avatarMode === 'static' ? 'static' : 'live2d',
-        live2dModelId:
-          typeof stored.live2dModelId === 'string' &&
-          LIVE2D_MODELS.some((model) => model.id === stored.live2dModelId)
-            ? stored.live2dModelId
-            : defaultPreferences.live2dModelId
+        animationEnabled: stored.animationEnabled === true
       };
     }
   } catch {
@@ -73,31 +55,7 @@ function PetApp() {
   const controller = useMemo(() => new AnimationController(), []);
   const [avatar, setAvatar] = useState<AvatarSnapshot>(machine.getSnapshot());
   const [assetFailed, setAssetFailed] = useState(false);
-  const [live2dReady, setLive2dReady] = useState(false);
-  const [live2dModels, setLive2dModels] = useState<Live2DModelStatus[]>([]);
-  const selectedLive2DModel =
-    live2dModels.find((model) => model.id === preferences.live2dModelId) ??
-    LIVE2D_MODELS.find((model) => model.id === preferences.live2dModelId);
-  const selectedLive2DModelPath = selectedLive2DModel?.modelPath ?? '';
   const asset = AvatarRegistry.find(preferences.characterId, avatar.state, avatar.expression);
-
-  const onLive2DReady = useCallback(() => {
-    setLive2dReady(true);
-  }, []);
-
-  const onLive2DError = useCallback((messageText: string) => {
-    setLive2dReady(false);
-    console.error('[live2d:runtime]', messageText);
-  }, []);
-
-  useEffect(() => {
-    if (preferences.avatarMode === 'live2d') return;
-    setLive2dReady(false);
-  }, [preferences.avatarMode]);
-
-  useEffect(() => {
-    setLive2dReady(false);
-  }, [preferences.live2dModelId]);
 
   useEffect(() => {
     const close = () => setMenuOpen(false);
@@ -132,20 +90,14 @@ function PetApp() {
           machine.transition({ type: 'avatar:set_expression', expression: event.newValue })
         );
       }
+      if (event.key === 'ice-agent.pet-state.v1' && event.newValue) {
+        const next = machine.transition({ type: 'avatar:set_state', state: event.newValue, priority: 1 });
+        if (next !== avatar) setAvatar(next);
+      }
     };
     window.addEventListener('storage', syncPanelChanges);
     return () => window.removeEventListener('storage', syncPanelChanges);
   }, [machine]);
-
-  useEffect(() => {
-    let active = true;
-    validateLive2DModels().then((models) => {
-      if (active) setLive2dModels(models);
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   useEffect(() => {
     setAssetFailed(false);
@@ -252,37 +204,25 @@ function PetApp() {
             if (event.button === 0) run(WindowService.drag);
           }}
         >
-          {preferences.avatarMode === 'live2d' && selectedLive2DModelPath && (
-            <Live2DRenderer
-              key={selectedLive2DModelPath || preferences.live2dModelId}
-              modelPath={selectedLive2DModelPath}
+          {assetFailed ? (
+            <div
+              className={`avatar-fallback state-${avatar.state.toLowerCase()}`}
+              aria-hidden="true"
+            >
+              <span>✦</span>
+            </div>
+          ) : (
+            <StaticAvatarRenderer
               state={avatar.state}
               expression={avatar.expression}
-              visible={live2dReady}
-              onReady={onLive2DReady}
-              onError={onLive2DError}
+              asset={asset}
+              animationEnabled={preferences.animationEnabled}
+              onAssetError={(messageText) => {
+                setAssetFailed(true);
+                console.error('[avatar:asset]', messageText);
+              }}
             />
           )}
-          {(preferences.avatarMode === 'static' || !live2dReady) &&
-            (assetFailed ? (
-              <div
-                className={`avatar-fallback state-${avatar.state.toLowerCase()}`}
-                aria-hidden="true"
-              >
-                <span>✦</span>
-              </div>
-            ) : (
-              <StaticAvatarRenderer
-                state={avatar.state}
-                expression={avatar.expression}
-                asset={asset}
-                animationEnabled={preferences.animationEnabled}
-                onAssetError={(messageText) => {
-                  setAssetFailed(true);
-                  console.error('[avatar:asset]', messageText);
-                }}
-              />
-            ))}
         </div>
         <h1>{asset.name}</h1>
         <p className="state-label">
@@ -365,7 +305,7 @@ export default function App() {
   const windowLabel = getCurrentWindow().label;
   const panel =
     queryPanel ??
-    (windowLabel === 'panel-chat' ? 'chat' : windowLabel === 'panel-settings' ? 'settings' : null);
-  if (panel === 'chat' || panel === 'settings') return <PanelWindow kind={panel} />;
+    (windowLabel === 'panel-chat' ? 'chat' : windowLabel === 'panel-settings' ? 'settings' : windowLabel === 'panel-chat-config' ? 'chat-config' : null);
+  if (panel === 'chat' || panel === 'settings' || panel === 'chat-config') return <PanelWindow kind={panel} />;
   return <PetApp />;
 }

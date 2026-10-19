@@ -19,7 +19,7 @@ Integrate a configurable large language model to provide text conversation, cont
 
 ## Implementation Tasks
 
-1. Define `ChatMessage`, `Conversation`, `ModelConfig`, `StreamChunk`, and error types.
+1. Define `ChatMessage`, `Conversation`, `ModelConfig`, `StreamChunk`, and error types. (implemented in `frontend/ai/types.ts`)
 2. Implement the `LLMProvider` interface and an OpenAI Compatible provider, isolating the HTTP client and vendor-specific fields.
 3. Implement the conversation service: message appending, streaming-token merging, cancellation, retries, and context trimming.
 4. Implement Persona configuration: name, personality, response style, behavior rules, and version.
@@ -43,10 +43,10 @@ Integrate a configurable large language model to provide text conversation, cont
 
 ## Phase Deliverables
 
-- Text chat configurable for an OpenAI Compatible API.
-- Streaming output, cancellation, retries, and model switching.
-- A versioned Persona configuration and editable settings page.
-- Vendor-independent LLM and conversation interfaces.
+- Text chat configurable for an OpenAI Compatible API. (implemented)
+- Streaming output, cancellation, retries, and model switching. (implemented)
+- A versioned Persona configuration and editable settings page. (implemented)
+- Vendor-independent LLM and conversation interfaces. (implemented)
 
 ## Acceptance Criteria
 

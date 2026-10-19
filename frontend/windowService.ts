@@ -30,7 +30,7 @@ export const WindowService = {
   closeCurrent: () => command<void>('window:close_current'),
   minimize: () => command<void>('window:minimize'),
   drag: () => command<void>('window:drag'),
-  openPanel: (panel: 'chat' | 'settings') =>
+  openPanel: (panel: 'chat' | 'settings' | 'chat-config') =>
     invoke<void>('window:open_panel', { panel }).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
       throw new WindowServiceError(message || 'The requested panel could not be opened.');

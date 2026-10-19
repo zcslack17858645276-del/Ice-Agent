@@ -73,14 +73,12 @@ button {
   background: transparent;
   pointer-events: none;
 }
-.desktop-mode .avatar-display,
-.desktop-mode .avatar-display canvas {
+.desktop-mode .avatar-display {
   pointer-events: auto;
 }
 .desktop-mode .avatar-display,
 .desktop-mode .avatar-display::before,
-.desktop-mode .avatar-display::after,
-.desktop-mode .live2d-canvas {
+.desktop-mode .avatar-display::after {
   border: 0;
   outline: 0;
   box-shadow: none;
@@ -93,10 +91,6 @@ button {
   height: 100%;
   min-width: 0;
   min-height: 0;
-}
-.desktop-mode .avatar-display > .avatar-image,
-.desktop-mode .avatar-display > .live2d-canvas {
-  clip-path: inset(0 0 62.5% 0);
 }
 .error-banner {
   margin: 0 12px 8px;
@@ -147,26 +141,6 @@ button {
   border-radius: 0;
   box-shadow: none;
   background: transparent;
-}
-.live2d-canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  display: block;
-  border: 0;
-  outline: 0;
-  border-radius: 0;
-  box-shadow: none;
-  background: transparent;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 160ms ease;
-}
-.live2d-canvas-visible {
-  opacity: 1;
 }
 .avatar-image {
   width: 100%;
@@ -557,10 +531,24 @@ button {
 .panel-window .empty-state {
   flex: 1;
 }
+.chat-messages { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 0; }
+.chat-message { max-width: 88%; margin: 5px 0; padding: 8px 10px; border-radius: 9px; color: #dcecf7; background: rgba(255,255,255,.07); white-space: pre-wrap; }
+.chat-message.user { margin-left: auto; background: rgba(67,157,190,.28); }
+.chat-message.assistant { margin-right: auto; }
+.chat-message small { color: #ffcb9c; }
+.chat-error { color: #ffb4bd; font-size: 12px; padding: 8px 0; }
+.panel-window-settings input:not([type='checkbox']) { max-width: 220px; min-width: 0; padding: 4px 7px; border: 1px solid rgba(142,190,203,.26); border-radius: 5px; color: #daf0ee; background: #142b30; font-size: 12px; }
 .panel-window-settings {
   flex: 1;
   overflow-y: auto;
 }
+.setting-link { width: 100%; border: 0; background: transparent; cursor: pointer; text-align: left; }
+.chat-config-page { flex: 1; overflow-y: auto; }
+.chat-config-page .setting-row { align-items: center; gap: 12px; }
+.chat-config-page .setting-row input { flex: 1; max-width: none; }
+.setting-help { color: #9aabba; font-size: 12px; line-height: 1.5; }
+.config-actions { display: flex; gap: 8px; padding-top: 18px; }
+.config-actions button { border: 1px solid rgba(142,190,203,.3); border-radius: 6px; padding: 7px 10px; color: #dff8f3; background: rgba(45,129,105,.35); }
 .panel-window .setting-row {
   align-items: center;
   gap: 12px;
