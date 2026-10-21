@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AvatarRegistry } from './avatar/registry';
 import { Live2DCanvas } from './avatar/live2d/Live2DCanvas';
+import { TaskPanel } from './TaskPanel';
 import { AVATAR_EXPRESSIONS, type AvatarExpression } from './avatar/types';
 import { WindowService } from './windowService';
 import { invoke } from '@tauri-apps/api/core';
@@ -290,6 +291,9 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
     return AVATAR_EXPRESSIONS.find((candidate) => candidate === value) ?? 'NEUTRAL';
   });
   const companion = AvatarRegistry.find(preferences.characterId, 'IDLE', expression);
+  const [chatMode, setChatMode] = useState<'chat' | 'task'>(
+    () => (localStorage.getItem('ice-agent.chat-mode.v1') === 'task' ? 'task' : 'chat')
+  );
   const [draftCharacterId, setDraftCharacterId] = useState(preferences.characterId);
   const draftAsset = AvatarRegistry.find(draftCharacterId, 'IDLE', expression);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -506,6 +510,30 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
             </p>
           </div>
         </div>
+        {kind === 'chat' && (
+          <div className="chat-mode" role="group" aria-label="Chat mode">
+            <button
+              type="button"
+              className={chatMode === 'chat' ? 'active' : ''}
+              onClick={() => {
+                setChatMode('chat');
+                localStorage.setItem('ice-agent.chat-mode.v1', 'chat');
+              }}
+            >
+              Chat
+            </button>
+            <button
+              type="button"
+              className={chatMode === 'task' ? 'active' : ''}
+              onClick={() => {
+                setChatMode('task');
+                localStorage.setItem('ice-agent.chat-mode.v1', 'task');
+              }}
+            >
+              Task
+            </button>
+          </div>
+        )}
         <div className="window-controls">
           <button
             type="button"
@@ -538,6 +566,7 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
           </button>
         </div>
       </header>
+      {kind === 'chat' && chatMode === 'task' && <TaskPanel />}
       {kind === 'chat' ? (
         <>
           <div className="chat-messages" aria-live="polite">

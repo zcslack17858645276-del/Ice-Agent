@@ -6,9 +6,14 @@ use std::net::{IpAddr, TcpStream};
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{Emitter, AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 const MAIN_WINDOW: &str = "main";
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "code", content = "message")]
@@ -895,6 +900,243 @@ async fn ai_test_connection(config: ConnectionConfig) -> Result<(), CommandError
     }
 }
 
+#[derive(Default)]
+struct TaskBuffer {
+    pid: Option<u32>,
+    events: Vec<serde_json::Value>,
+}
+
+#[derive(Default)]
+struct TaskRunState(std::sync::Mutex<TaskBuffer>);
+
+/// Resolves the `dsh` launcher from PATH (npm shims resolve to a .cmd on Windows).
+fn task_log(app: &AppHandle, message: &str) {
+    if let Ok(dir) = app.path().app_data_dir() {
+        let _ = std::fs::create_dir_all(&dir);
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("ice-task.log"))
+        {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|value| value.as_millis())
+                .unwrap_or_default();
+            let _ = std::io::Write::write_all(&mut file, format!("[{stamp}] {message}\n").as_bytes());
+        }
+    }
+}
+
+fn resolve_dsh() -> Result<String, CommandError> {
+    #[cfg(windows)]
+    {
+        let output = std::process::Command::new("cmd")
+            .args(["/C", "where", "dsh"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|_| CommandError::Configuration("Unable to run `where dsh`.".into()))?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut fallback = None;
+        for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+            if line.to_ascii_lowercase().ends_with(".cmd") {
+                return Ok(line.to_string());
+            }
+            fallback.get_or_insert(line.to_string());
+        }
+        if let Some(path) = fallback {
+            return Ok(path);
+        }
+        Err(CommandError::Configuration(
+            "`dsh` was not found on PATH. Install DeepSeek Harness or add it to PATH.".into(),
+        ))
+    }
+    #[cfg(not(windows))]
+    {
+        Ok("dsh".to_string())
+    }
+}
+
+#[tauri::command(rename = "task:start")]
+async fn task_start(
+    app: AppHandle,
+    state: State<'_, TaskRunState>,
+    prompt: String,
+    session_id: Option<String>,
+    workspace: Option<String>,
+) -> Result<serde_json::Value, CommandError> {
+    task_log(&app, &format!("task_start invoked, prompt len={}", prompt.len()));
+    if prompt.trim().is_empty() {
+        return Err(CommandError::Configuration("Task prompt is empty.".into()));
+    }
+    let key = secure_store_get("deepseek_api_key".into())?.ok_or_else(|| {
+        CommandError::Configuration(
+            "Configure the DeepSeek API key in Chat Configuration before running tasks.".into(),
+        )
+    })?;
+    task_log(&app, "deepseek key ok");
+    let dsh = match resolve_dsh() {
+        Ok(path) => {
+            task_log(&app, &format!("resolved dsh: {path}"));
+            path
+        }
+        Err(error) => {
+            task_log(&app, &format!("resolve dsh failed: {error}"));
+            return Err(error);
+        }
+    };
+    let cwd = workspace.unwrap_or_else(|| "D:\\codex\\workspace".to_string());
+    std::fs::create_dir_all(&cwd).map_err(|error| {
+        CommandError::Configuration(format!("Unable to create the task workspace: {error}"))
+    })?;
+    let mut args: Vec<String> = vec!["--profile".into(), "headless".into(), "--json".into()];
+    if let Some(id) = session_id.filter(|value| !value.trim().is_empty()) {
+        args.push("--session-id".into());
+        args.push(id);
+    }
+    // The Electron-based dsh shim does not reliably read a piped stdin, so the
+    // task goes in as one positional argument with newlines flattened.
+    args.push(prompt.split_whitespace().collect::<Vec<_>>().join(" "));
+
+    let mut command = std::process::Command::new("cmd");
+    command
+        .arg("/C")
+        .arg(&dsh)
+        .args(&args)
+        .current_dir(&cwd)
+        .env("DEEPSEEK_API_KEY", key)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .creation_flags(CREATE_NO_WINDOW);
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            task_log(&app, &format!("spawn failed: {error}"));
+            return Err(CommandError::Configuration(format!("Unable to start dsh: {error}")));
+        }
+    };
+    task_log(&app, &format!("spawned dsh pid={}", child.id()));
+    let pid = child.id();
+    {
+        let mut guard = state
+            .0
+            .lock()
+            .map_err(|_| CommandError::Configuration("Task state is unavailable.".into()))?;
+        guard.pid = Some(pid);
+        guard.events.clear();
+    }
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let app_handle = app.clone();
+    std::thread::spawn(move || {
+        let err_handle = app_handle.clone();
+        let err_thread = std::thread::spawn(move || {
+            if let Some(err) = stderr {
+                use std::io::BufRead as _;
+                for line in std::io::BufReader::new(err).lines().map_while(Result::ok) {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    if let Some(handle) = err_handle.try_state::<TaskRunState>() {
+                        let _ = handle;
+                    }
+                    task_log(&err_handle, &format!("stderr: {line}"));
+                    let _ = err_handle.emit(
+                        "task:event",
+                        serde_json::json!({ "type": "stderr", "text": line }),
+                    );
+                }
+            }
+        });
+        if let Some(out) = stdout {
+            use std::io::BufRead as _;
+            for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                if let Ok(dir) = app_handle.path().app_data_dir() {
+                    let _ = std::fs::create_dir_all(&dir);
+                    if let Ok(mut file) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(dir.join("ice-task.log"))
+                    {
+                        let _ = std::io::Write::write_all(&mut file, format!("{line}\n").as_bytes());
+                    }
+                }
+                let event = serde_json::from_str::<serde_json::Value>(&line)
+                    .unwrap_or_else(|_| serde_json::json!({ "type": "raw", "text": line }));
+                if let Some(task_state) = app_handle.try_state::<TaskRunState>() {
+                    if let Ok(mut guard) = task_state.0.lock() {
+                        guard.events.push(event.clone());
+                        if guard.events.len() > 4000 {
+                            guard.events.drain(0..1000);
+                        }
+                    }
+                }
+                let _ = app_handle.emit("task:event", event);
+            }
+        }
+        let _ = err_thread.join();
+        let code = child
+            .wait()
+            .ok()
+            .and_then(|status| status.code())
+            .unwrap_or(-1);
+        task_log(&app_handle, &format!("dsh exited code={code}"));
+        let exit_event = serde_json::json!({ "type": "exit", "code": code });
+        if let Some(task_state) = app_handle.try_state::<TaskRunState>() {
+            if let Ok(mut guard) = task_state.0.lock() {
+                guard.events.push(exit_event.clone());
+                guard.pid = None;
+            }
+        }
+        let _ = app_handle.emit("task:event", exit_event);
+    });
+
+    Ok(serde_json::json!({ "pid": pid, "workspace": cwd }))
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TaskPoll {
+    events: Vec<serde_json::Value>,
+    running: bool,
+    cursor: usize,
+}
+
+/// Polling transport: works without the core event permission.
+#[tauri::command(rename = "task:poll")]
+fn task_poll(state: State<'_, TaskRunState>, since: usize) -> Result<TaskPoll, CommandError> {
+    let guard = state
+        .0
+        .lock()
+        .map_err(|_| CommandError::Configuration("Task state is unavailable.".into()))?;
+    let start = since.min(guard.events.len());
+    Ok(TaskPoll {
+        events: guard.events[start..].to_vec(),
+        running: guard.pid.is_some(),
+        cursor: guard.events.len(),
+    })
+}
+
+#[tauri::command(rename = "task:stop")]
+fn task_stop(state: State<'_, TaskRunState>) -> Result<(), CommandError> {
+    let pid = state
+        .0
+        .lock()
+        .map_err(|_| CommandError::Configuration("Task state is unavailable.".into()))?
+        .pid;
+    if let Some(pid) = pid {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+    Ok(())
+}
+
 fn main_window(app: &AppHandle) -> Result<WebviewWindow, CommandError> {
     app.get_webview_window(MAIN_WINDOW)
         .ok_or_else(|| CommandError::WindowUnavailable("The main window is unavailable.".into()))
@@ -978,13 +1220,26 @@ const FLYOUT_HEIGHT: f64 = 230.0;
 const MENU_GAP: f64 = 10.0;
 const PET_MAX_SCALE: f64 = 1.6;
 
-/// Last applied pet scale and whether the context menu is open, so either
-/// command can recompute the window box without the other one guessing.
-struct PetWindowState(Mutex<(f64, bool)>);
+/// Current pet state: the window rectangle never changes after startup, only the
+/// character box inside it, so opening the menu cannot resize anything.
+#[derive(Clone, Copy)]
+struct PetState {
+    scale: f64,
+    menu_open: bool,
+    pet_width: f64,
+    pet_height: f64,
+}
+
+struct PetWindowState(Mutex<PetState>);
 
 impl Default for PetWindowState {
     fn default() -> Self {
-        Self(Mutex::new((1.0, false)))
+        Self(Mutex::new(PetState {
+            scale: 1.0,
+            menu_open: false,
+            pet_width: PET_BASE_WIDTH,
+            pet_height: (PET_BASE_WIDTH * 1.62).round(),
+        }))
     }
 }
 
@@ -993,6 +1248,68 @@ impl Default for PetWindowState {
 struct PetBox {
     width: f64,
     height: f64,
+}
+
+#[cfg(windows)]
+fn cursor_position() -> Option<(i32, i32)> {
+    #[repr(C)]
+    struct Point {
+        x: i32,
+        y: i32,
+    }
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetCursorPos(point: *mut Point) -> i32;
+    }
+    let mut point = Point { x: 0, y: 0 };
+    let ok = unsafe { GetCursorPos(&mut point) };
+    if ok == 0 {
+        None
+    } else {
+        Some((point.x, point.y))
+    }
+}
+
+/// Keeps the pet clickable while letting the transparent area fall through to
+/// the desktop: the window ignores cursor events unless the pointer is over the
+/// character (or the menu is open).
+#[cfg(windows)]
+fn start_pet_hit_test(app: AppHandle) {
+    std::thread::spawn(move || {
+        let mut interactive = true;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(40));
+            let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
+                continue;
+            };
+            let (pet_width, pet_height, menu_open) = {
+                let state = app.state::<PetWindowState>();
+                let Ok(guard) = state.0.lock() else { continue };
+                (guard.pet_width, guard.pet_height, guard.menu_open)
+            };
+            let (Ok(position), Ok(size), Some(cursor)) = (
+                window.outer_position(),
+                window.outer_size(),
+                cursor_position(),
+            ) else {
+                continue;
+            };
+            let factor = window.scale_factor().unwrap_or(1.0).max(0.5);
+            let window_width = size.width as f64 / factor;
+            let window_height = size.height as f64 / factor;
+            let local_x = (cursor.0 - position.x) as f64 / factor;
+            let local_y = (cursor.1 - position.y) as f64 / factor;
+            let over_pet = local_x >= window_width - pet_width
+                && local_x <= window_width
+                && local_y >= window_height - pet_height
+                && local_y <= window_height;
+            let next = menu_open || over_pet;
+            if next != interactive {
+                interactive = next;
+                let _ = window.set_ignore_cursor_events(!next);
+            }
+        }
+    });
 }
 
 #[cfg(windows)]
@@ -1040,57 +1357,50 @@ fn apply_window_rect(
     Ok(())
 }
 
-/// Applies the new pet rectangle while the window is hidden so the compositor
-/// never shows a frame with the character anchored to the old rectangle.
-fn force_quiet_apply(
-    window: &WebviewWindow,
-    scale: f64,
-    menu_open: bool,
-) -> Result<PetBox, CommandError> {
-    apply_pet_window(window, scale, menu_open)
+/// Fixed window rectangle: big enough for the character plus the menu, so the
+/// menu never resizes or repositions the window.
+fn fixed_window_box(area: &tauri::PhysicalRect<i32, u32>, factor: f64) -> (f64, f64) {
+    let logical_height = area.size.height as f64 / factor;
+    let width = (PET_BASE_WIDTH * PET_MAX_SCALE) + MENU_WIDTH + FLYOUT_WIDTH + MENU_GAP * 2.0;
+    let height = (logical_height * PET_BASE_RATIO * PET_MAX_SCALE)
+        .max(MENU_HEIGHT + FLYOUT_HEIGHT + MENU_GAP)
+        .round();
+    (width, height)
 }
 
-fn apply_pet_window(
-    window: &WebviewWindow,
-    scale: f64,
-    menu_open: bool,
-) -> Result<PetBox, CommandError> {
-    let scale = scale.clamp(0.55, 1.6);
-    let Some(monitor) = window
-        .current_monitor()
-        .map_err(|error| CommandError::WindowOperation(error.to_string()))?
-    else {
-        return Ok(PetBox {
-            width: (PET_BASE_WIDTH * scale).round(),
-            height: (PET_BASE_WIDTH * scale * 1.62).round(),
-        });
+/// Recomputes the character box for the current scale and remembers it.
+fn compute_pet_box(window: &WebviewWindow, state: &mut PetState) -> PetBox {
+    let pet_width = (PET_BASE_WIDTH * state.scale).round();
+    let pet_height = match window.current_monitor() {
+        Ok(Some(monitor)) => {
+            let factor = monitor.scale_factor();
+            let area = monitor.work_area();
+            ((area.size.height as f64 / factor) * PET_BASE_RATIO * state.scale).round()
+        }
+        _ => (PET_BASE_WIDTH * 1.62 * state.scale).round(),
+    };
+    state.pet_width = pet_width;
+    state.pet_height = pet_height;
+    PetBox {
+        width: pet_width,
+        height: pet_height,
+    }
+}
+
+/// Positions the fixed-size window in the bottom-right corner of the work area.
+fn apply_pet_window(window: &WebviewWindow, state: &mut PetState) -> Result<PetBox, CommandError> {
+    let pet_box = compute_pet_box(window, state);
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        return Ok(pet_box);
     };
     let factor = monitor.scale_factor();
     let area = monitor.work_area();
-    let pet_width = (PET_BASE_WIDTH * scale).round();
-    let pet_height = ((area.size.height as f64 / factor) * PET_BASE_RATIO * scale).round();
-    // The menu keeps its own size and opens beside the character: the window
-    // grows to the left (menu column + flyout column) instead of covering it.
-    // While the menu is open the window is frozen at the largest pet size, so
-    // dragging the size slider never moves the menu and never resizes again.
-    let max_pet_height = (area.size.height as f64 / factor) * PET_BASE_RATIO * PET_MAX_SCALE;
-    let win_width = if menu_open {
-        (PET_BASE_WIDTH * PET_MAX_SCALE) + MENU_WIDTH + FLYOUT_WIDTH + MENU_GAP * 2.0
-    } else {
-        pet_width
-    };
-    let win_height = if menu_open {
-        max_pet_height.max(MENU_HEIGHT + FLYOUT_HEIGHT + MENU_GAP)
-    } else {
-        pet_height
-    };
+    let (win_width, win_height) = fixed_window_box(&area, factor);
     let margin = (10.0 * factor).round() as i32;
     let x = area.position.x + area.size.width as i32 - (win_width * factor).round() as i32 - margin;
     let y = area.position.y + area.size.height as i32 - (win_height * factor).round() as i32 - margin;
     let physical_width = (win_width * factor).round() as i32;
     let physical_height = (win_height * factor).round() as i32;
-    // Resize and move in one atomic window operation: doing it in two steps lets
-    // the compositor show a frame where the character sits at the old anchor.
     #[cfg(windows)]
     {
         apply_window_rect(window, x, y, physical_width, physical_height)?;
@@ -1104,10 +1414,7 @@ fn apply_pet_window(
             .set_position(tauri::PhysicalPosition::new(x, y))
             .map_err(|error| CommandError::WindowOperation(error.to_string()))?;
     }
-    Ok(PetBox {
-        width: pet_width,
-        height: pet_height,
-    })
+    Ok(pet_box)
 }
 
 #[tauri::command(rename = "window:set_pet_scale")]
@@ -1121,8 +1428,9 @@ fn window_set_pet_scale(
         .0
         .lock()
         .map_err(|_| CommandError::WindowOperation("Pet window state is unavailable.".into()))?;
-    guard.0 = scale.clamp(0.55, 1.6);
-    force_quiet_apply(&window, guard.0, guard.1)
+    guard.scale = scale.clamp(0.55, 1.6);
+    // No window resize: the character just changes size inside the fixed window.
+    Ok(compute_pet_box(&window, &mut guard))
 }
 
 #[tauri::command(rename = "window:set_menu_open")]
@@ -1136,8 +1444,8 @@ fn window_set_menu_open(
         .0
         .lock()
         .map_err(|_| CommandError::WindowOperation("Pet window state is unavailable.".into()))?;
-    guard.1 = open;
-    force_quiet_apply(&window, guard.0, guard.1)
+    guard.menu_open = open;
+    Ok(compute_pet_box(&window, &mut guard))
 }
 
 #[tauri::command(rename = "window:minimize_current")]
@@ -1301,32 +1609,22 @@ pub fn run() {
         .manage(VoiceTranscriptionRequests::default())
         .manage(VoiceSynthesisRequests::default())
         .manage(PetWindowState::default())
+        .manage(TaskRunState::default())
         .setup(|app| {
             if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
-                if let Some(monitor) = window.current_monitor()? {
-                    let scale_factor = monitor.scale_factor();
-                    let logical_height = monitor.size().height as f64 / scale_factor;
-                    let width = 300.0_f64;
-                    let height = (logical_height * 0.45).round();
-                    window.set_min_size(Some(tauri::LogicalSize::new(120.0, 1.0)))?;
-                    window.set_size(tauri::LogicalSize::new(width, height))?;
-                    // Park the pet in the bottom-right corner of the work area so it
-                    // never sits on top of the taskbar.
-                    let area = monitor.work_area();
-                    let margin = (10.0 * scale_factor).round() as i32;
-                    let x = area.position.x + area.size.width as i32
-                        - (width * scale_factor).round() as i32
-                        - margin;
-                    let y = area.position.y + area.size.height as i32
-                        - (height * scale_factor).round() as i32
-                        - margin;
-                    window.set_position(tauri::PhysicalPosition::new(x, y))?;
-                    startup_log(&format!(
-                        "setup: main window {width}x{height} at {x},{y} on monitor {logical_height}"
-                    ));
-                } else {
-                    startup_log("setup: no current monitor, keeping configured window size");
+                window.set_min_size(Some(tauri::LogicalSize::new(120.0, 1.0)))?;
+                {
+                    let state = app.state::<PetWindowState>();
+                    let mut guard = state
+                        .0
+                        .lock()
+                        .map_err(|_| "Pet window state is unavailable.".to_string())?;
+                    apply_pet_window(&window, &mut guard)
+                        .map_err(|error| error.to_string())?;
                 }
+                startup_log("setup: pet window uses the fixed menu-sized box");
+                #[cfg(windows)]
+                start_pet_hit_test(app.handle().clone());
             } else {
                 startup_log("setup: main window is missing");
             }
@@ -1342,6 +1640,9 @@ pub fn run() {
             window_drag,
             window_drag_current,
             window_set_pet_scale,
+            task_start,
+            task_poll,
+            task_stop,
             window_set_menu_open,
             window_minimize_current,
             window_toggle_maximize_current,

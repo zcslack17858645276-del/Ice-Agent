@@ -22,3 +22,7 @@ RULES.md
 Ice-Agent Git Rules.md
 .ref/
 .tmp/
+assets/live2d/
+assets/static/
+release/
+*.apk
