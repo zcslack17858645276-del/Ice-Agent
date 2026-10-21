@@ -6,7 +6,7 @@ Give the desktop pet replaceable visual assets, basic animations, expressions, a
 
 ## Scope and Boundaries
 
-- Initially support PNG/WebP sequences or static assets, with an abstract asset interface for future Live2D or 3D integration.（png: assets/xglk.png，live2d: assets/live2d）
+- Focus this phase on static PNG character assets and their CSS state feedback.
 - Define the `IDLE`, `THINKING`, `HAPPY`, `SAD`, `WORKING`, and `SLEEPING` states.
 - Implement state transitions, animation playback, expression switching, and fallback behavior for asset-loading failures.
 - Do not implement model inference, emotion analysis, or lip synchronization in this phase.
@@ -25,7 +25,7 @@ Give the desktop pet replaceable visual assets, basic animations, expressions, a
 4. Implement an animation controller supporting playback, pause, looping, one-shot animations, and asset preloading.
 5. Bind the state machine to the desktop pet component, providing loading, missing-asset, and degraded-static-image states.
 6. Add character selection and an animation toggle to the settings page; initially retain a local persistence implementation for the configuration interface.
-7. Define the `AvatarRenderer` adapter boundary for future Live2D/3D support without coupling to a specific SDK in advance.
+7. Keep the PNG renderer behind the avatar component boundary so the current implementation remains focused and testable.
 
 ## Suggested Interfaces
 
@@ -66,13 +66,13 @@ Give the desktop pet replaceable visual assets, basic animations, expressions, a
 
 - Animation asset size and preloading may affect startup time; record asset sizes and load duration.
 - Event names must remain stable because Phases 2, 4, and 5 will reuse them.
-- Live2D/3D integration should add a renderer implementation without changing the public state-machine contract.
+- Other rendering technologies are outside the current objective.
 
 ## Implementation Status
 
 - Implemented: typed avatar contracts, versioned manifest and registry, state machine, animation/preload controller, static renderer adapter, six visible state presentations, expression switching, fallback display, settings persistence, and focused state/manifest tests.
 - Verification gap: component-level automated tests have not been added; behavior is covered by the state-machine and asset-manifest tests plus production build checks.
 - Asset verification: two transparent RGBA portraits are now registered and selectable; the manifest records dimensions and byte sizes for both.
-- Live2D verification: Phase 1.1 integrates Cubism 5-r.5, discovers model entries under the designated `assets/xglk`, `assets/miku_free`, and `assets/miku_pro` directories, and validates resources referenced by each model configuration. Automated model/resource tests and production build pass. Headless browser startup and resource responses are verified; desktop visual motion, physics, and Tauri transparent-window behavior remain manual verification items.
+- Avatar implementation uses the registered PNG assets, CSS state feedback, expression filters, and static renderer fallback. No non-PNG renderer is part of the current scope.
 - Manual Windows checks remain: transparent window behavior, DPI scaling, frame rate, and long-running animation loops.
 

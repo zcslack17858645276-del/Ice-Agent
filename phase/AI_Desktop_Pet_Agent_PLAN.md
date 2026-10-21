@@ -134,10 +134,7 @@ Tools              MCP
 -   WebP
 -   简单动画
 
-后期：
-
--   Live2D
--   3D Avatar
+当前角色系统仅使用 PNG 资源和简单动画。
 
 ## 任务列表
 

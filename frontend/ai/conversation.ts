@@ -40,6 +40,9 @@ export class ConversationService {
   getPersona(): Persona {
     return this.personaService.getActivePersona();
   }
+  setPersona(persona: Persona): void {
+    this.personaService.setPersona(persona);
+  }
   getConversation(idValue: string): Conversation {
     const existing = this.conversations.get(idValue);
     if (existing) return existing;
@@ -68,21 +71,20 @@ export class ConversationService {
         retryable: false
       });
     const conversation = this.getConversation(conversationId);
-    if (!conversation.messages.some((m) => m.role === 'system'))
-      conversation.messages.unshift({
-        id: id(),
-        role: 'system',
-        content: this.personaService.systemMessage(),
-        createdAt: Date.now(),
-        personaVersion: this.personaService.getActivePersona().version
-      });
     if (conversation.messages.some((m) => m.role === 'user' && m.content === text && m.incomplete))
       return conversation.messages.find((m) => m.incomplete)!;
+    const persona = this.personaService.getActivePersona();
+    const systemMessage: ChatMessage = {
+      id: id(),
+      role: 'system',
+      content: this.personaService.systemMessage(),
+      createdAt: Date.now(),
+      personaVersion: persona.version
+    };
+    conversation.messages.push(systemMessage);
     conversation.messages.push({ id: id(), role: 'user', content: text, createdAt: Date.now() });
-    const trimmed = [
-      conversation.messages[0],
-      ...conversation.messages.slice(-Math.max(0, this.config.contextWindow - 1))
-    ];
+    const history = conversation.messages.filter((message) => message.role !== 'system');
+    const trimmed = [systemMessage, ...history.slice(-Math.max(0, this.config.contextWindow - 1))];
     const controller = new AbortController();
     this.controllers.set(conversationId, controller);
     let timedOut = false;
@@ -95,7 +97,8 @@ export class ConversationService {
       role: 'assistant',
       content: '',
       createdAt: Date.now(),
-      incomplete: true
+      incomplete: true,
+      personaVersion: persona.version
     };
     conversation.messages.push(assistant);
     try {

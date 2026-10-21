@@ -1,5 +1,7 @@
 # Phase 1.1 Development Log: Live2D Runtime Integration
 
+Historical record only. The Live2D implementation and model assets described here have since been removed; the current application uses static PNG avatars exclusively.
+
 ## Date
 
 2026-10-18

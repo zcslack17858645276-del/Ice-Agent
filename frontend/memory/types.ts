@@ -9,6 +9,7 @@ export type StoredMessage = {
   content: string;
   createdAt: number;
   incomplete?: boolean;
+  personaVersion?: string;
 };
 
 export type ConversationSummary = {

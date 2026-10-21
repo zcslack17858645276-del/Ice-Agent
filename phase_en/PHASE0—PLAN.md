@@ -9,7 +9,7 @@ Establish a launchable, developable, and extensible Windows desktop application 
 - Use Tauri 2 as the desktop shell, with TypeScript and React or Vue on the frontend (choose one during initialization and record the decision).
 - Implement a transparent, borderless, always-on-top window, together with basic dragging and window lifecycle management.
 - Provide a minimum UI skeleton containing a desktop pet display area, chat area, and settings entry.
-- Do not integrate a real LLM, database, voice, tool calling, or Live2D at this stage.
+- Do not integrate a real LLM, database, voice, or tool calling at this stage.
 
 ## Prerequisites and Dependencies
 

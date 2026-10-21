@@ -6,13 +6,7 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: [
-      'dist',
-      'src-tauri/target',
-      'CubismSdkForWeb/**',
-      'assets/live2d/runtime/**',
-      'assets/*/runtime/live2dcubismcore.min.js'
-    ]
+    ignores: ['dist', 'src-tauri/target', 'assets/**', '.ref/**', '.tmp/**', 'frontend/avatar/live2d/framework/**']
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

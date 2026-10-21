@@ -6,17 +6,17 @@ Investigate why switching among the six states (`Idle`, `Thinking`, `Happy`, `Sa
 
 Requirements:
 
-1. Inspect the existing frontend, Tauri commands, Rust backend, Live2D integration, model resources, and state mappings before making changes.
+1. Inspect the existing frontend, Tauri commands, Rust backend, PNG resources, and state mappings before making changes.
 2. Identify the actual root cause. Check for missing interfaces, invalid resource paths, failed resource loading, blocking operations, deadlocks, repeated model initialization, and duplicate animation loops.
 3. Set `Idle` as the default state on application startup.
 4. Verify that each state maps to a valid animation, expression, parameter update, or other supported model behavior.
 5. If a state resource or animation is unavailable, log a descriptive error and fall back safely to `Idle`. Do not freeze the UI or retry indefinitely.
 6. Keep state transitions asynchronous and non-blocking where appropriate.
-7. Preserve the existing Cubism 5-r.5 integration and model-discovery implementation.
+7. Keep avatar rendering on the static PNG path.
 8. Test startup, all six states, repeated transitions, and recovery from invalid resources.
 9. Report the root cause, modified files, validation results, and any remaining limitations.
 
-Do not replace the existing Live2D implementation or rewrite unrelated modules.
+Do not add a non-PNG renderer or rewrite unrelated modules.
 
 ## Phase 1.2.2: Borderless Desktop Pet Interaction
 

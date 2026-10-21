@@ -21,6 +21,10 @@ export type AvatarAsset = {
   fallbackSrc: string;
   license: { author: string; license: string; source: string };
   states: Partial<Record<PetState, AnimationClip>>;
+  /** Present when the character is a Cubism model; `src` holds the model3.json URL. */
+  live2d?: boolean;
+  /** Motion group names exposed by the model (Idle/Blink/Nod/Shake...). */
+  motions?: string[];
 };
 
 export type AvatarTransitionEvent =

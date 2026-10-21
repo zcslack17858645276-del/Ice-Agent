@@ -22,6 +22,11 @@ async function command<T>(name: string): Promise<T> {
   }
 }
 
+export type PetBox = {
+  width: number;
+  height: number;
+};
+
 export const WindowService = {
   show: () => command<void>('window:show'),
   hide: () => command<void>('window:hide'),
@@ -30,6 +35,19 @@ export const WindowService = {
   closeCurrent: () => command<void>('window:close_current'),
   minimize: () => command<void>('window:minimize'),
   drag: () => command<void>('window:drag'),
+  dragCurrent: () => command<void>('window:drag_current'),
+  setPetScale: (scale: number) =>
+    invoke<PetBox>('window:set_pet_scale', { scale }).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new WindowServiceError(message || 'The pet could not be resized.');
+    }),
+  setMenuOpen: (open: boolean) =>
+    invoke<PetBox>('window:set_menu_open', { open }).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new WindowServiceError(message || 'The pet window could not be resized.');
+    }),
+  minimizeCurrent: () => command<void>('window:minimize_current'),
+  toggleMaximizeCurrent: () => command<boolean>('window:toggle_maximize_current'),
   openPanel: (panel: 'chat' | 'settings' | 'chat-config') =>
     invoke<void>('window:open_panel', { panel }).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);

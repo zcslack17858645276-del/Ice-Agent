@@ -6,8 +6,8 @@
       "name": "XGLK",
       "author": "Project supplied asset",
       "license": "Personal use",
-      "source": "assets/xglk4.png",
-      "asset": "../../assets/xglk4.png",
+      "source": "assets/static/xglk4.png",
+      "asset": "../../assets/static/xglk4.png",
       "resolution": 967,
       "sizeBytes": 1086202,
       "states": {
@@ -24,8 +24,8 @@
       "name": "DNY",
       "author": "Project supplied asset",
       "license": "Personal use",
-      "source": "assets/dny.png",
-      "asset": "../../assets/dny.png",
+      "source": "assets/static/dny.png",
+      "asset": "../../assets/static/dny.png",
       "resolution": 1216,
       "sizeBytes": 1827433,
       "states": {
@@ -37,17 +37,5 @@
         "SLEEPING": { "durationMs": 3000, "loop": true, "className": "sleeping" }
       }
     }
-  ],
-  "live2d": {
-    "modelDirectories": ["assets/xglk", "assets/miku_free", "assets/miku_pro"],
-    "runtime": {
-      "provider": "frontend/avatar/live2d/cubismAdapter.ts",
-      "files": [
-        "assets/xglk/runtime/live2dcubismcore.min.js",
-        "assets/xglk/runtime/shaders/WebGL/",
-        "CubismSdkForWeb/CubismSdkForWeb-5-r.5/Framework/src/"
-      ],
-      "status": "integrated from official Cubism SDK for Web 5-r.5"
-    }
-  }
+  ]
 }

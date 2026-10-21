@@ -1,0 +1,50 @@
+{
+	"Version": 3,
+	"FileReferences": {
+		"Moc": "mornye.moc3",
+		"Textures": [
+			"mornye.4096/texture_00.png"
+		],
+		"Physics": "mornye.physics3.json",
+		"DisplayInfo": "mornye.cdi3.json",
+		"Motions": {
+			"Idle": [
+				{
+					"File": "mornye.idle.motion3.json"
+				}
+			],
+			"Blink": [
+				{
+					"File": "mornye.blink.motion3.json"
+				}
+			],
+			"Nod": [
+				{
+					"File": "mornye.nod.motion3.json"
+				}
+			],
+			"Shake": [
+				{
+					"File": "mornye.shake.motion3.json"
+				}
+			]
+		}
+	},
+	"Groups": [
+		{
+			"Target": "Parameter",
+			"Name": "EyeBlink",
+			"Ids": [
+				"ParamEyeLOpen",
+				"ParamEyeROpen"
+			]
+		},
+		{
+			"Target": "Parameter",
+			"Name": "LipSync",
+			"Ids": [
+				"ParamMouthOpenY"
+			]
+		}
+	]
+}

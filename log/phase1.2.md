@@ -1,5 +1,7 @@
 # Phase 1.2 Development Log
 
+Historical record only. References below describe the retired Live2D integration; current avatar rendering uses static PNGs exclusively.
+
 ## Diagnosis
 
 State transitions were already represented by `AvatarStateMachine`, but the Live2D renderer could mount while the asynchronous model catalog was still empty. That left it with an empty model URL and an invalid resource load during startup. Motion selection also assumed every mapped state group existed on every model, so a model without `Nod` or `Shake` could receive an unsupported motion request. The controller now uses the catalog's stable model URL immediately, keeps load generations cancellation-safe, and validates the available motion groups before selecting a state motion.

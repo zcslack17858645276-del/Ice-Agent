@@ -19,6 +19,7 @@ tauri = { version = "2.8", features = [] }
 keyring = { version = "3", features = ["windows-native"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
+tokio = { version = "1", default-features = false, features = ["rt", "sync"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { AnimationController } from './avatar/animationController';
 import { AvatarRegistry } from './avatar/registry';
 import { StaticAvatarRenderer } from './avatar/renderer';
+import { Live2DCanvas } from './avatar/live2d/Live2DCanvas';
 import { AvatarStateMachine, type AvatarSnapshot } from './avatar/stateMachine';
 import { PET_STATES, type PetState } from './avatar/types';
 import { WindowService, type AppInfo } from './windowService';
 import { PanelWindow } from './PanelWindow';
+import { VoiceServices } from './voice/services';
 
 type Preferences = {
   characterId: string;
@@ -18,6 +20,27 @@ const defaultPreferences: Preferences = {
 };
 const preferencesKey = 'ice-agent.avatar-preferences.v1';
 const expressionKey = 'ice-agent.avatar-expression.v1';
+const petScaleKey = 'ice-agent.pet-scale.v5';
+
+/** Live2D models play motion groups instead of the PNG state set. */
+const live2dMotionByState: Record<PetState, string> = {
+  IDLE: 'Idle',
+  THINKING: 'Idle',
+  HAPPY: 'Nod',
+  SAD: 'Shake',
+  WORKING: 'Idle',
+  SLEEPING: 'Idle'
+};
+
+function stateMotion(state: PetState) {
+  return live2dMotionByState[state] ?? 'Idle';
+}
+
+function readPetScale(): number {
+  const raw = Number(localStorage.getItem(petScaleKey));
+  if (!Number.isFinite(raw) || raw <= 0) return 1;
+  return Math.min(1.6, Math.max(0.55, raw));
+}
 
 function readPreferences(): Preferences {
   try {
@@ -55,10 +78,31 @@ function PetApp() {
   const controller = useMemo(() => new AnimationController(), []);
   const [avatar, setAvatar] = useState<AvatarSnapshot>(machine.getSnapshot());
   const [assetFailed, setAssetFailed] = useState(false);
+  const [assetError, setAssetError] = useState<string | null>(null);
+  const [petScale, setPetScale] = useState(readPetScale);
+  const [petBox, setPetBox] = useState<{ width: number; height: number } | null>(null);
+  const [menuAnchor, setMenuAnchor] = useState<number | null>(null);
+  const menuGuardRef = useRef(0);
+  const live2dStageRef = useRef<{ play: (name: string) => void } | null>(null);
   const asset = AvatarRegistry.find(preferences.characterId, avatar.state, avatar.expression);
 
   useEffect(() => {
-    const close = () => setMenuOpen(false);
+    WindowService.setPetScale(petScale).then(setPetBox).catch(console.error);
+  }, [petScale]);
+
+  useEffect(() => {
+    // The context menu keeps its own size: the window grows around it instead of
+    // shrinking the menu with the character.
+    WindowService.setMenuOpen(menuOpen).then(setPetBox).catch(console.error);
+  }, [menuOpen]);
+
+  useEffect(() => {
+    // The window resize that accompanies the menu can blur the webview; ignore
+    // those synthetic blur/click events so the menu is not closed instantly.
+    const close = () => {
+      if (Date.now() - menuGuardRef.current < 700) return;
+      setMenuOpen(false);
+    };
     window.addEventListener('click', close);
     window.addEventListener('blur', close);
     return () => {
@@ -79,6 +123,11 @@ function PetApp() {
   }, []);
 
   useEffect(() => {
+    if (localStorage.getItem('ice-agent.voice-autostart.v1') === 'false') return;
+    void VoiceServices.startAll().catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
     localStorage.setItem(preferencesKey, JSON.stringify(preferences));
   }, [preferences]);
 
@@ -91,7 +140,11 @@ function PetApp() {
         );
       }
       if (event.key === 'ice-agent.pet-state.v1' && event.newValue) {
-        const next = machine.transition({ type: 'avatar:set_state', state: event.newValue, priority: 1 });
+        const next = machine.transition({
+          type: 'avatar:set_state',
+          state: event.newValue,
+          priority: 1
+        });
         if (next !== avatar) setAvatar(next);
       }
     };
@@ -181,8 +234,25 @@ function PetApp() {
   return (
     <main
       className="app-shell desktop-mode"
+      style={
+        petBox
+          ? ({
+              '--pet-w': `${petBox.width}px`,
+              '--pet-h': `${petBox.height}px`,
+              '--menu-anchor': menuAnchor ? `${menuAnchor}px` : undefined
+            } as CSSProperties)
+          : undefined
+      }
       onContextMenu={(event) => {
         event.preventDefault();
+        // Right-click toggles the menu: a second right-click closes it again.
+        if (menuOpen) {
+          setMenuOpen(false);
+          return;
+        }
+        // Freeze the menu beside the character at the size it had when opened.
+        setMenuAnchor(petBox?.width ?? null);
+        menuGuardRef.current = Date.now();
         setMenuOpen(true);
       }}
     >
@@ -210,7 +280,21 @@ function PetApp() {
               aria-hidden="true"
             >
               <span>✦</span>
+              {assetError && <em className="avatar-error">{assetError}</em>}
             </div>
+          ) : asset.live2d ? (
+            <Live2DCanvas
+              modelUrl={asset.src}
+              motion={stateMotion(avatar.state)}
+              onStage={(stage) => {
+                live2dStageRef.current = stage;
+              }}
+              onError={(messageText) => {
+                setAssetFailed(true);
+                setAssetError(messageText);
+                console.error('[avatar:live2d]', messageText);
+              }}
+            />
           ) : (
             <StaticAvatarRenderer
               state={avatar.state}
@@ -219,6 +303,7 @@ function PetApp() {
               animationEnabled={preferences.animationEnabled}
               onAssetError={(messageText) => {
                 setAssetFailed(true);
+                setAssetError(messageText);
                 console.error('[avatar:asset]', messageText);
               }}
             />
@@ -254,33 +339,67 @@ function PetApp() {
           aria-label="Pet menu"
           onClick={(event) => event.stopPropagation()}
         >
+          <span className="context-menu-title">
+            <span aria-hidden="true">♡</span>
+            {asset.name}
+          </span>
           <button onClick={() => openPanel('chat')}>
-            <span aria-hidden="true">💬</span> Chat
+            <span aria-hidden="true">✉</span> Chat
           </button>
-          <button
-            onClick={() => {
-              setMenuOpen(false);
-              run(WindowService.drag);
-            }}
-          >
-            <span aria-hidden="true">✥</span> Move
-          </button>
-          <div className="context-menu-group">
-            <span>
-              <span aria-hidden="true">◈</span> States
+          <div className="context-menu-item" tabIndex={0}>
+            <span aria-hidden="true">◈</span>
+            <span className="item-label">States</span>
+            <span className="item-chevron" aria-hidden="true">
+              ›
             </span>
-            {PET_STATES.map((state) => (
-              <button
-                key={state}
-                className="context-state"
-                onClick={() => {
-                  setMenuOpen(false);
-                  transition(state);
+            <div className="context-flyout states" role="group" aria-label="States">
+              {asset.live2d && asset.motions?.length
+                ? asset.motions.map((motionName) => (
+                    <button
+                      key={motionName}
+                      className="flyout-state"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        live2dStageRef.current?.play(motionName);
+                      }}
+                    >
+                      {motionName}
+                    </button>
+                  ))
+                : PET_STATES.map((state) => (
+                    <button
+                      key={state}
+                      className={avatar.state === state ? 'flyout-state active' : 'flyout-state'}
+                      onClick={() => {
+                        setMenuOpen(false);
+                        transition(state);
+                      }}
+                    >
+                      {state[0] + state.slice(1).toLowerCase()}
+                    </button>
+                  ))}
+            </div>
+          </div>
+          <div className="context-menu-item" tabIndex={0}>
+            <span aria-hidden="true">◐</span>
+            <span className="item-label">Size</span>
+            <span className="item-value">{Math.round(petScale * 100)}%</span>
+            <div className="context-flyout size">
+              <input
+                className="vertical-range"
+                type="range"
+                min="0.55"
+                max="1.6"
+                step="0.05"
+                value={petScale}
+                aria-label="Pet size"
+                onChange={(event) => {
+                  const next = Number(event.target.value);
+                  setPetScale(next);
+                  localStorage.setItem(petScaleKey, String(next));
                 }}
-              >
-                {state[0] + state.slice(1).toLowerCase()}
-              </button>
-            ))}
+              />
+            </div>
           </div>
           <button onClick={() => openPanel('settings')}>
             <span aria-hidden="true">⚙</span> Settings
@@ -305,7 +424,14 @@ export default function App() {
   const windowLabel = getCurrentWindow().label;
   const panel =
     queryPanel ??
-    (windowLabel === 'panel-chat' ? 'chat' : windowLabel === 'panel-settings' ? 'settings' : windowLabel === 'panel-chat-config' ? 'chat-config' : null);
-  if (panel === 'chat' || panel === 'settings' || panel === 'chat-config') return <PanelWindow kind={panel} />;
+    (windowLabel === 'panel-chat'
+      ? 'chat'
+      : windowLabel === 'panel-settings'
+        ? 'settings'
+        : windowLabel === 'panel-chat-config'
+          ? 'chat-config'
+          : null);
+  if (panel === 'chat' || panel === 'settings' || panel === 'chat-config')
+    return <PanelWindow kind={panel} />;
   return <PetApp />;
 }

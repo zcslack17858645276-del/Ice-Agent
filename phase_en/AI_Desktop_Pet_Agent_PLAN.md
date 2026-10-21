@@ -130,10 +130,7 @@ Initial:
 - WebP
 - Simple animations
 
-Later:
-
-- Live2D
-- 3D Avatar
+Current avatar work is limited to PNG assets and simple animations.
 
 ## Task List
 

@@ -2,8 +2,8 @@ import manifest from './manifest.json';
 import type { AvatarAsset, PetState } from './types';
 
 const assetUrls: Record<string, string> = {
-  xglk: new URL('../../assets/xglk4.png', import.meta.url).href,
-  dny: new URL('../../assets/dny.png', import.meta.url).href
+  xglk: new URL('../../assets/static/xglk4.png', import.meta.url).href,
+  dny: new URL('../../assets/static/dny.png', import.meta.url).href
 };
 
 type ManifestCharacter = {
@@ -18,7 +18,7 @@ type ManifestCharacter = {
   states: AvatarAsset['states'];
 };
 
-const characters = (manifest.characters as ManifestCharacter[]).map((character) => {
+const staticCharacters = (manifest.characters as ManifestCharacter[]).map((character) => {
   const src = assetUrls[character.id];
   if (!src) throw new Error(`No bundled avatar asset registered for '${character.id}'.`);
   return {
@@ -33,6 +33,28 @@ const characters = (manifest.characters as ManifestCharacter[]).map((character) 
     states: character.states
   } satisfies AvatarAsset;
 });
+
+/** Cubism models exported by psd2live; their states are motion groups. */
+const cubismCharacters: AvatarAsset[] = [
+  {
+    id: 'mornye',
+    characterId: 'mornye',
+    name: 'Mornye',
+    resolution: 4096,
+    sizeBytes: 0,
+    src: new URL(
+      '../../assets/live2d/mornye/mornye-psd2live/mornye.model3.json',
+      import.meta.url
+    ).href,
+    fallbackSrc: new URL('../../assets/static/dny.png', import.meta.url).href,
+    license: { author: 'PSD2Live export', license: 'Personal use', source: 'assets/live2d/mornye' },
+    states: {},
+    live2d: true,
+    motions: ['Idle', 'Blink', 'Nod', 'Shake']
+  }
+];
+
+const characters = [...staticCharacters, ...cubismCharacters];
 
 export const AvatarRegistry = {
   list: (): AvatarAsset[] => characters,

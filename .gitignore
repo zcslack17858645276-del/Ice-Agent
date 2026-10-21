@@ -13,3 +13,12 @@ src-tauri/gen/
 .idea/
 Thumbs.db
 *.tsbuildinfo
+codex history
+phase
+phase_en
+docs
+viz
+RULES.md
+Ice-Agent Git Rules.md
+.ref/
+.tmp/

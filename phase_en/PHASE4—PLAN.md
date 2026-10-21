@@ -69,3 +69,17 @@ Complete the voice-input-to-voice-output loop and provide consistent visual feed
 - TTS streaming sentence splitting affects latency and semantic continuity; the provider should own boundary policy.
 - Voice feedback from Phase 5 tool execution must reuse the playback queue and interruption mechanism.
 
+## Implementation Status
+
+- [x] TypeScript voice contracts define capture, ASR, TTS, playback, settings, normalized errors, and session events.
+- [x] Push-to-talk `VoiceSession` orchestration is implemented with generation-based cancellation and stale-event suppression.
+- [x] Browser `MediaDevices` microphone capture and Web Audio playback adapters are implemented behind provider interfaces.
+- [x] Offline mock ASR, TTS, and playback providers are available for deterministic tests without a model or network connection.
+- [x] Chat integration updates transcript, conversation, and avatar state feedback; voice settings persist with recording retention disabled by default.
+- [x] Automated type checking, build, lint, formatting of touched files, and the full test suite pass.
+- [x] Configurable local Whisper ASR adapter sends Chinese multipart transcription requests through the Rust desktop bridge.
+- [x] Audio retention is opt-in and disabled by default; Whisper requests can be cancelled and are limited to loopback HTTP services.
+- [x] Configurable GPT-SoVITS V2 TTS adapter, loopback bridge, sentence queue, cancellation, and connection test are implemented.
+- [ ] Live WSL Whisper service integration remains required.
+- [ ] Windows manual verification remains required for microphone permissions, device switching, sample-rate behavior, output routing, and process shutdown.
+
