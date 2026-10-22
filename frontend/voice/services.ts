@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { voiceServer } from './serverVoice.ts';
 
 export type VoiceServiceName = 'whisper' | 'sovits';
 
@@ -9,19 +9,45 @@ export type VoiceServiceStatus = {
 
 export const voiceAutostartKey = 'ice-agent.voice-autostart.v1';
 
+async function api(path: string, init?: RequestInit): Promise<Response> {
+  const server = await voiceServer();
+  return fetch(`${server.base}${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${server.token}`,
+      ...(init?.headers ?? {})
+    }
+  });
+}
+
 /**
- * Thin wrapper around the WSL service commands. Whisper (ASR) listens on
- * 127.0.0.1:8000 and GPT-SoVITS (TTS) on 127.0.0.1:9880; both are started
- * inside the user's `GPTSoVits` conda environment.
+ * Voice services are owned by the standalone Ice Agent server:
+ * `/v1/voice/status` probes Whisper (ASR) and GPT-SoVITS (TTS) upstreams,
+ * `/v1/voice/start|stop` run the commands configured in `config.json`
+ * (`voice.commands.whisperStart` …).
  */
 export const VoiceServices = {
-  status: () => invoke<VoiceServiceStatus>('voice:services_status'),
-  start: (service: VoiceServiceName) => invoke<void>('voice:service_start', { service }),
-  stop: (service: VoiceServiceName) => invoke<void>('voice:service_stop', { service }),
+  status: async (): Promise<VoiceServiceStatus> => {
+    try {
+      const response = await api('/v1/voice/status');
+      if (!response.ok) return { whisper: false, sovits: false };
+      const payload = (await response.json()) as { asr?: boolean; tts?: boolean };
+      return { whisper: Boolean(payload.asr), sovits: Boolean(payload.tts) };
+    } catch {
+      return { whisper: false, sovits: false };
+    }
+  },
+  start: async (service: VoiceServiceName): Promise<void> => {
+    await api('/v1/voice/start', { method: 'POST', body: JSON.stringify({ service }) }).catch(() => undefined);
+  },
+  stop: async (service: VoiceServiceName): Promise<void> => {
+    await api('/v1/voice/stop', { method: 'POST', body: JSON.stringify({ service }) }).catch(() => undefined);
+  },
   startAll: async (): Promise<void> => {
     await Promise.allSettled([
-      invoke('voice:service_start', { service: 'whisper' }),
-      invoke('voice:service_start', { service: 'sovits' })
+      api('/v1/voice/start', { method: 'POST', body: JSON.stringify({ service: 'whisper' }) }),
+      api('/v1/voice/start', { method: 'POST', body: JSON.stringify({ service: 'sovits' }) })
     ]);
   }
 };

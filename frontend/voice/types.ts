@@ -112,15 +112,7 @@ export type VoiceEvent = {
 export type VoiceSettings = {
   inputDeviceId: string;
   outputDeviceId: string;
-  providerId: 'mock' | 'whisper';
   ttsProviderId: 'mock' | 'gpt-sovits';
-  whisperBaseUrl: string;
-  whisperModel: string;
-  gptSovitsBaseUrl: string;
-  gptSovitsBatchSize: number;
-  referenceAudioPath: string;
-  referenceTranscript: string;
-  referenceLanguage: string;
   responseLanguage: string;
   volume: number;
   autoplay: boolean;

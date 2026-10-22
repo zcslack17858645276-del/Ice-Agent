@@ -787,7 +787,9 @@ async fn ai_usage(app: AppHandle) -> Result<UsageResponse, CommandError> {
 #[tauri::command(rename = "ai:balance")]
 async fn ai_balance(base_url: Option<String>) -> Result<BalanceResponse, CommandError> {
     let key = secure_store_get("deepseek_api_key".into())?.ok_or_else(|| {
-        CommandError::Configuration("Configure an API key in Chat Configuration first.".into())
+        CommandError::Configuration(
+            "Configure an API key in Chat Configuration before sending a message.".into(),
+        )
     })?;
     let base = base_url
         .unwrap_or_else(|| "https://api.deepseek.com".into())
@@ -835,13 +837,42 @@ async fn ai_balance(base_url: Option<String>) -> Result<BalanceResponse, Command
     })
 }
 
-#[tauri::command(rename = "ai:stream")]
-async fn ai_stream(app: AppHandle, request: ChatRequest) -> Result<Vec<BackendChunk>, CommandError> {
-    let key = secure_store_get("deepseek_api_key".into())?.ok_or_else(|| {
+
+/// Chooses the credential for an outbound chat request: the standalone server
+/// token when talking to the local Ice Agent server, otherwise the DeepSeek key.
+fn chat_key(app: &AppHandle, base_url: &str) -> Result<String, CommandError> {
+    let base = base_url.trim_end_matches('/').trim_end_matches("/chat/completions");
+    let local_server =
+        base.starts_with("http://127.0.0.1:8787") || base.starts_with("http://localhost:8787");
+    if local_server {
+        let path = data_dir(app)
+            .map_err(|error| CommandError::Configuration(error.to_string()))?
+            .join("config.json");
+        let text = std::fs::read_to_string(path).map_err(|error| {
+            CommandError::Configuration(format!("Read D:\\IceAgent\\config.json: {error}"))
+        })?;
+        let value: serde_json::Value =
+            serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|error| {
+                CommandError::Configuration(format!("Invalid config.json: {error}"))
+            })?;
+        return value
+            .get("token")
+            .and_then(|item| item.as_str())
+            .map(|item| item.to_string())
+            .ok_or_else(|| {
+                CommandError::Configuration("Missing token in D:\\IceAgent\\config.json".into())
+            });
+    }
+    secure_store_get("deepseek_api_key".into())?.ok_or_else(|| {
         CommandError::Configuration(
             "Configure an API key in Chat Configuration before sending a message.".into(),
         )
-    })?;
+    })
+}
+
+#[tauri::command(rename = "ai:stream")]
+async fn ai_stream(app: AppHandle, request: ChatRequest) -> Result<Vec<BackendChunk>, CommandError> {
+    let key = chat_key(&app, &request.base_url)?;
     let base = request
         .base_url
         .trim_end_matches('/')
@@ -1702,6 +1733,7 @@ pub fn run() {
             window_drag_current,
             window_set_pet_scale,
             task_start,
+            remote::server_local_config,
             remote::server_start,
             remote::server_stop,
             remote::server_status,

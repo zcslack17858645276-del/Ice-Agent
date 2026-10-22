@@ -357,6 +357,10 @@ function PetApp() {
             <span aria-hidden="true">♡</span>
             {asset.name}
           </span>
+          <button onClick={() => openPanel('settings')}>
+            <span aria-hidden="true">⚙</span>
+            Settings
+          </button>
           <button onClick={() => openPanel('chat')}>
             <span aria-hidden="true">✉</span> Chat
           </button>

@@ -1,4 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
+import { voiceServer } from '../voice/serverVoice';
+import { voiceServer } from '../voice/serverVoice';
 import { AvatarRegistry } from './registry';
 import type { AvatarAsset, PetState } from './types';
 
@@ -39,7 +41,13 @@ function toAsset(entry: ImportedEntry): AvatarAsset {
 
 export async function loadImportedCharacters(): Promise<number> {
   try {
-    const list = await invoke<ImportedEntry[]>('character:list');
+    const server = await voiceServer();
+    const response = await fetch(`${server.base}/v1/characters`, {
+      headers: { Authorization: `Bearer ${server.token}` }
+    });
+    if (!response.ok) throw new Error(`characters ${response.status}`);
+    const payload = (await response.json()) as { characters?: ImportedEntry[] };
+    const list = payload.characters ?? [];
     const assets = list.map(toAsset);
     AvatarRegistry.registerImported(assets);
     return assets.length;

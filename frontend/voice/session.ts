@@ -113,7 +113,7 @@ export class VoiceSession {
       this.ensureCurrent(generation, signal);
       this.transition('synthesizing', generation);
       if (this.speechQueue) {
-        await this.speechQueue.speak(assistant.content, this.settings, signal, (state) =>
+        void this.speechQueue.speak(assistant.content, this.settings, signal, (state) =>
           this.transition(state, generation)
         );
         this.ensureCurrent(generation, signal);

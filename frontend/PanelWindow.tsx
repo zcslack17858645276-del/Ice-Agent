@@ -4,6 +4,7 @@ import { Live2DCanvas } from './avatar/live2d/Live2DCanvas';
 import { TaskPanel } from './TaskPanel';
 import { importFiles, loadImportedCharacters } from './avatar/imported';
 import { applyTheme, readTheme, saveTheme, type Theme } from './theme';
+import { saveServerConfig } from './serverConfig';
 import { AVATAR_EXPRESSIONS, type AvatarExpression } from './avatar/types';
 import { WindowService } from './windowService';
 import { invoke } from '@tauri-apps/api/core';
@@ -288,7 +289,7 @@ function readPreferences(): Preferences {
 
 export function PanelWindow({ kind }: { kind: PanelKind }) {
   const [preferences, setPreferences] = useState(readPreferences);
-  const [expression, setExpression] = useState<AvatarExpression>(() => {
+  const [expression] = useState(() => {
     const value = localStorage.getItem(expressionKey);
     return AVATAR_EXPRESSIONS.find((candidate) => candidate === value) ?? 'NEUTRAL';
   });
@@ -428,6 +429,40 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
   const [error, setError] = useState<string | null>(null);
   const [modelConfig, setModelConfig] = useState(readModelConfig);
   const [apiKey, setApiKey] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const local = await invoke<{ base: string; token: string; model: string }>('server:local_config');
+        const response = await fetch(`${local.base}/v1/config`, {
+          headers: { Authorization: `Bearer ${local.token}` }
+        });
+        const payload = (await response.json()) as {
+          config?: { model?: string; persona?: unknown };
+        };
+        if (cancelled) return;
+        const serverPersona = payload.config?.persona;
+        if (serverPersona && typeof serverPersona === 'object') {
+          const adopted = serverPersona as never;
+          writePersonaSettings(adopted);
+          setPersona(adopted);
+          conversationService.setPersona(adopted);
+        }
+        setModelConfig((current) => ({
+          ...current,
+          baseUrl: `${local.base}/v1`,
+          model: payload.config?.model || local.model || current.model
+        }));
+        setApiKey(local.token);
+      } catch {
+        /* standalone server offline: keep local settings */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [configStatus, setConfigStatus] = useState<string | null>(null);
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>(readVoiceSettings);
   const voiceSettingsRef = useRef(voiceSettings);
@@ -436,7 +471,7 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
   const outputPlayer = useMemo(() => new WebAudioPlayer(), []);
   const ttsProvider = useMemo(
     () =>
-      voiceSettings.ttsProviderId === 'gpt-sovits'
+      true
         ? new GPTSoVITSTTSProvider(() => voiceSettingsRef.current)
         : new MockTTSProvider(),
     [voiceSettings.ttsProviderId]
@@ -449,7 +484,7 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
     () =>
       new VoiceSession(
         new MediaDevicesInputProvider(),
-        voiceSettings.providerId === 'whisper'
+        true
           ? new WhisperASRProvider(() => voiceSettingsRef.current)
           : new MockASRProvider(),
         conversationService,
@@ -510,12 +545,11 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
   useEffect(() => {
     if (!voiceEvent) return;
     if (voiceEvent.transcript?.text) setMessage(voiceEvent.transcript.text);
-    if (voiceEvent.transcript || voiceEvent.state === 'playing' || voiceEvent.state === 'idle')
-      setMessages(
-        conversationService
-          .getConversation(activeConversationId)
-          .messages.filter((item) => item.role !== 'system')
-      );
+    setMessages(
+      conversationService
+        .getConversation(activeConversationId)
+        .messages.filter((item) => item.role !== 'system')
+    );
     if (['recording', 'recognizing', 'synthesizing'].includes(voiceEvent.state))
       localStorage.setItem('ice-agent.pet-state.v1', 'THINKING');
     if (voiceEvent.state === 'playing') localStorage.setItem('ice-agent.pet-state.v1', 'WORKING');
@@ -974,122 +1008,60 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
             </section>
           </aside>
           <div className="settings-column">
-            <section className="settings-card" aria-labelledby="companion-heading">
-              <h2 id="companion-heading">Companion</h2>
-              <button
-                className="setting-row setting-link"
-                onClick={() => WindowService.openPanel('chat-config')}
-              >
-                <span>Chat Configuration</span>
-                <span className="setting-chevron" aria-hidden="true">
-                  ›
-                </span>
-              </button>
-              <div className="import-card">
-              <h3>Characters</h3>
-              <input
-                ref={imageInputRef}
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                style={{ display: 'none' }}
-                onChange={(event) => {
-                  void runImport(event.target.files, 'image');
-                  event.target.value = '';
-                }}
-              />
-              <input
-                ref={folderInputRef}
-                type="file"
-                multiple
-                style={{ display: 'none' }}
-                // @ts-expect-error non-standard but supported by Chromium/WebView2
-                webkitdirectory=""
-                onChange={(event) => {
-                  void runImport(event.target.files, 'live2d');
-                  event.target.value = '';
-                }}
-              />
-              <div className="import-actions">
-                <button type="button" onClick={() => imageInputRef.current?.click()}>
-                  Import image
-                </button>
-                <button type="button" onClick={() => folderInputRef.current?.click()}>
-                  Import Live2D folder
-                </button>
-              </div>
-              <p className="import-hint">Stored in D:\IceAgent\characters{importStatus ? ` · ${importStatus}` : ''}</p>
-              <div className="server-row">
-                <span>
-                  Server {serverInfo.running ? `on :${serverInfo.port}` : 'off'}
-                </span>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (serverInfo.running) {
-                      await invoke('server:stop');
-                      setServerInfo({ ...serverInfo, running: false });
-                    } else {
-                      const result = await invoke<{ running: boolean; port: number; token: string }>(
-                        'server:start',
-                        { port: 8787 }
-                      );
-                      setServerInfo({ running: true, port: result.port, token: result.token });
-                    }
-                  }}
-                >
-                  {serverInfo.running ? 'Stop' : 'Start'}
-                </button>
-              </div>
-              {serverInfo.token && (
-                <p className="import-hint">
-                  Token: <code>{serverInfo.token.slice(0, 8)}…</code>
-                </p>
-              )}
-            </div>
-            <label className="setting-row" htmlFor="theme-toggle">
-                <span>Dark theme</span>
-                <input
-                  id="theme-toggle"
-                  type="checkbox"
-                  checked={theme === 'dark'}
-                  onChange={(event) => {
-                    const next: Theme = event.target.checked ? 'dark' : 'light';
-                    setTheme(next);
-                    saveTheme(next);
-                  }}
-                />
-              </label>
-              <label className="setting-row" htmlFor="animation-toggle">
-                <span>Animations</span>
-                <input
-                  id="animation-toggle"
-                  type="checkbox"
-                  checked={preferences.animationEnabled}
-                  onChange={(event) =>
-                    setPreferences((current) => ({
-                      ...current,
-                      animationEnabled: event.target.checked
-                    }))
-                  }
-                />
-              </label>
-              <label className="setting-row" htmlFor="expression-select">
-                <span>Expression</span>
-                <select
-                  id="expression-select"
-                  value={expression}
-                  onChange={(event) => setExpression(event.target.value as AvatarExpression)}
-                >
-                  {AVATAR_EXPRESSIONS.map((value) => (
-                    <option key={value} value={value}>
-                      {value[0] + value.slice(1).toLowerCase()}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </section>
+      <section className="settings-card">
+        <h2>Companion</h2>
+        <label className="setting-row" htmlFor="theme-toggle">
+          <span>Dark theme</span>
+          <input
+            id="theme-toggle"
+            type="checkbox"
+            checked={theme === 'dark'}
+            onChange={(event) => {
+              const next: Theme = event.target.checked ? 'dark' : 'light';
+              setTheme(next);
+              saveTheme(next);
+            }}
+          />
+        </label>
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          style={{ display: 'none' }}
+          onChange={(event) => {
+            void runImport(event.target.files, 'image');
+            event.target.value = '';
+          }}
+        />
+        <input
+          ref={folderInputRef}
+          type="file"
+          multiple
+          style={{ display: 'none' }}
+          // @ts-expect-error non-standard but supported by WebView2
+          webkitdirectory=""
+          onChange={(event) => {
+            void runImport(event.target.files, 'live2d');
+            event.target.value = '';
+          }}
+        />
+        <div className="setting-row">
+          <span>Characters</span>
+          <div className="setting-inline-actions">
+            <button type="button" onClick={() => imageInputRef.current?.click()}>
+              Import image
+            </button>
+            <button type="button" onClick={() => folderInputRef.current?.click()}>
+              Import Live2D
+            </button>
+          </div>
+        </div>
+        {importStatus && <p className="setting-help">{importStatus}</p>}
+      </section>
+
+
+            
             <DeepSeekBalancePanel baseUrl={modelConfig.baseUrl} />
-            <VoiceServicesPanel />
             <VoiceSettingsPanel
               settings={voiceSettings}
               devices={voiceDevices}
@@ -1105,6 +1077,7 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
                 writePersonaSettings(versioned);
                 setPersona(versioned);
                 conversationService.setPersona(versioned);
+                void saveServerConfig({ persona: versioned });
               }}
               onReset={() => {
                 const reset = resetPersonaSettings();
@@ -1222,214 +1195,36 @@ function VoiceServicesPanel() {
 function VoiceSettingsPanel({
   settings,
   devices,
-  onChange,
-  speechQueue
+  onChange
 }: {
   settings: VoiceSettings;
   devices: { inputs: { id: string; label: string }[]; outputs: { id: string; label: string }[] };
   onChange: (settings: VoiceSettings) => void;
-  speechQueue: SpeechQueue;
 }) {
-  const [testStatus, setTestStatus] = useState<string | null>(null);
   return (
     <section className="settings-card voice-settings" aria-labelledby="voice-heading">
       <h2 id="voice-heading">Voice</h2>
-      <label className="setting-row" htmlFor="tts-provider">
-        <span>Speech engine</span>
-        <select
-          id="tts-provider"
-          value={settings.ttsProviderId}
-          onChange={(event) =>
-            onChange({
-              ...settings,
-              ttsProviderId: event.target.value as VoiceSettings['ttsProviderId']
-            })
-          }
-        >
-          <option value="gpt-sovits">GPT-SoVITS V2</option>
-          <option value="mock">Offline mock</option>
-        </select>
-      </label>
-      {settings.ttsProviderId === 'gpt-sovits' && (
-        <>
-          <label className="setting-row" htmlFor="gpt-sovits-url">
-            <span>GPT-SoVITS URL</span>
-            <input
-              id="gpt-sovits-url"
-              type="url"
-              value={settings.gptSovitsBaseUrl}
-              onChange={(event) => onChange({ ...settings, gptSovitsBaseUrl: event.target.value })}
-            />
-          </label>
-          <div className="setting-row batch-row">
-            <span>Inference batch size · {settings.gptSovitsBatchSize}</span>
-            <div className="batch-stepper">
-              <button
-                type="button"
-                className="batch-step"
-                aria-label="Decrease batch size"
-                disabled={settings.gptSovitsBatchSize <= 1}
-                onClick={() =>
-                  onChange({
-                    ...settings,
-                    gptSovitsBatchSize: Math.max(1, settings.gptSovitsBatchSize - 1)
-                  })
-                }
-              >
-                −
-              </button>
-              <input
-                id="gpt-sovits-batch"
-                type="range"
-                min="1"
-                max="256"
-                step="1"
-                value={settings.gptSovitsBatchSize}
-                aria-label="Inference batch size"
-                onChange={(event) =>
-                  onChange({ ...settings, gptSovitsBatchSize: Number(event.target.value) })
-                }
-              />
-              <button
-                type="button"
-                className="batch-step"
-                aria-label="Increase batch size"
-                disabled={settings.gptSovitsBatchSize >= 256}
-                onClick={() =>
-                  onChange({
-                    ...settings,
-                    gptSovitsBatchSize: Math.min(256, settings.gptSovitsBatchSize + 1)
-                  })
-                }
-              >
-                +
-              </button>
-            </div>
-          </div>
-          <label className="setting-row stacked" htmlFor="reference-audio">
-            <span>WSL reference audio path</span>
-            <input
-              id="reference-audio"
-              value={settings.referenceAudioPath}
-              onChange={(event) =>
-                onChange({ ...settings, referenceAudioPath: event.target.value })
-              }
-            />
-          </label>
-          <label className="setting-row stacked" htmlFor="reference-transcript">
-            <span>Reference transcript</span>
-            <textarea
-              id="reference-transcript"
-              value={settings.referenceTranscript}
-              onChange={(event) =>
-                onChange({ ...settings, referenceTranscript: event.target.value })
-              }
-              rows={2}
-            />
-          </label>
-          <label className="setting-row" htmlFor="reference-language">
-            <span>Reference language</span>
-            <input
-              id="reference-language"
-              value={settings.referenceLanguage}
-              onChange={(event) => onChange({ ...settings, referenceLanguage: event.target.value })}
-            />
-          </label>
-          <label className="setting-row" htmlFor="response-language">
-            <span>Response language</span>
-            <input
-              id="response-language"
-              value={settings.responseLanguage}
-              onChange={(event) => onChange({ ...settings, responseLanguage: event.target.value })}
-            />
-          </label>
-          <div className="config-actions">
-            <button
-              type="button"
-              onClick={async () => {
-                setTestStatus('Synthesizing test audio…');
-                try {
-                  await speechQueue.speak('你好，这是语音连接测试。', settings);
-                  setTestStatus('Test speech played.');
-                } catch (reason) {
-                  setTestStatus(
-                    reason instanceof Error ? reason.message : 'Synthesis test failed.'
-                  );
-                }
-              }}
-            >
-              Test synthesis
-            </button>
-            {testStatus && <span role="status">{testStatus}</span>}
-          </div>
-        </>
-      )}
-      <label className="setting-row" htmlFor="voice-provider">
-        <span>Provider</span>
-        <select
-          id="voice-provider"
-          value={settings.providerId}
-          onChange={(event) =>
-            onChange({ ...settings, providerId: event.target.value as VoiceSettings['providerId'] })
-          }
-        >
-          <option value="mock">Offline mock</option>
-          <option value="whisper">Local Whisper (WSL)</option>
-        </select>
-      </label>
-      {settings.providerId === 'whisper' && (
-        <>
-          <label className="setting-row" htmlFor="whisper-base-url">
-            <span>Whisper service</span>
-            <input
-              id="whisper-base-url"
-              type="url"
-              value={settings.whisperBaseUrl}
-              onChange={(event) => onChange({ ...settings, whisperBaseUrl: event.target.value })}
-            />
-          </label>
-          <label className="setting-row" htmlFor="whisper-model">
-            <span>Whisper model</span>
-            <input
-              id="whisper-model"
-              value={settings.whisperModel}
-              onChange={(event) => onChange({ ...settings, whisperModel: event.target.value })}
-            />
-          </label>
-        </>
-      )}
-      <label className="setting-row" htmlFor="voice-input-device">
+      <p className="setting-help">
+        Speech recognition and synthesis run on the Ice Agent server. Only the local microphone and
+        playback volume are configured here.
+      </p>
+      <label className="setting-row" htmlFor="voice-mic">
         <span>Microphone</span>
         <select
-          id="voice-input-device"
+          id="voice-mic"
           value={settings.inputDeviceId}
           onChange={(event) => onChange({ ...settings, inputDeviceId: event.target.value })}
         >
           <option value="">System default</option>
           {devices.inputs.map((device) => (
             <option key={device.id} value={device.id}>
-              {device.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="setting-row" htmlFor="voice-output-device">
-        <span>Speaker</span>
-        <select
-          id="voice-output-device"
-          value={settings.outputDeviceId}
-          onChange={(event) => onChange({ ...settings, outputDeviceId: event.target.value })}
-        >
-          <option value="">System default</option>
-          {devices.outputs.map((device) => (
-            <option key={device.id} value={device.id}>
-              {device.label}
+              {device.label || device.id}
             </option>
           ))}
         </select>
       </label>
       <label className="setting-row" htmlFor="voice-volume">
-        <span>Volume</span>
+        <span>Playback volume · {Math.round(settings.volume * 100)}%</span>
         <input
           id="voice-volume"
           type="range"
@@ -1440,25 +1235,6 @@ function VoiceSettingsPanel({
           onChange={(event) => onChange({ ...settings, volume: Number(event.target.value) })}
         />
       </label>
-      <label className="setting-row" htmlFor="voice-autoplay">
-        <span>Speak replies</span>
-        <input
-          id="voice-autoplay"
-          type="checkbox"
-          checked={settings.autoplay}
-          onChange={(event) => onChange({ ...settings, autoplay: event.target.checked })}
-        />
-      </label>
-      <label className="setting-row" htmlFor="voice-retain-recordings">
-        <span>Keep recordings</span>
-        <input
-          id="voice-retain-recordings"
-          type="checkbox"
-          checked={settings.retainRecordings}
-          onChange={(event) => onChange({ ...settings, retainRecordings: event.target.checked })}
-        />
-      </label>
-      <p className="setting-help">Recordings stay temporary unless this setting is enabled.</p>
     </section>
   );
 }
@@ -1474,11 +1250,81 @@ function PersonaSettingsPanel({
 }) {
   const [draft, setDraft] = useState(persona);
   const [status, setStatus] = useState<string | null>(null);
+  const [personaPicker, setPersonaPicker] = useState<{ id: string; name: string }[]>([]);
+  const [activePersona, setActivePersona] = useState('default');
   useEffect(() => setDraft(persona), [persona]);
+
+  const loadPersonas = async () => {
+    try {
+      const local = await invoke<{ base: string; token: string }>('server:local_config');
+      const response = await fetch(`${local.base}/v1/personas`, {
+        headers: { Authorization: `Bearer ${local.token}` }
+      });
+      if (!response.ok) return;
+      const payload = (await response.json()) as {
+        personas?: { id: string; name: string }[];
+        active?: string;
+      };
+      setPersonaPicker(payload.personas ?? []);
+      setActivePersona(payload.active ?? 'default');
+    } catch {
+      /* server offline */
+    }
+  };
+
+  useEffect(() => {
+    void loadPersonas();
+  }, []);
+
+  const switchPersona = async (id: string) => {
+    try {
+      const local = await invoke<{ base: string; token: string }>('server:local_config');
+      await fetch(`${local.base}/v1/personas/active`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${local.token}`
+        },
+        body: JSON.stringify({ id })
+      });
+      setActivePersona(id);
+      const response = await fetch(`${local.base}/v1/config`, {
+        headers: { Authorization: `Bearer ${local.token}` }
+      });
+      const payload = (await response.json()) as { config?: { persona?: unknown } };
+      const next = payload.config?.persona;
+      if (next && typeof next === 'object') {
+        const adopted = next as Persona;
+        setDraft(adopted);
+        onSave(adopted);
+      }
+      setStatus(`Switched to ${id}.`);
+    } catch {
+      setStatus('Unable to switch persona (server offline).');
+    }
+  };
   const update = (patch: Partial<Persona>) => setDraft((current) => ({ ...current, ...patch }));
   return (
     <section className="settings-card persona-settings" aria-labelledby="persona-heading">
       <h2 id="persona-heading">Persona</h2>
+      <label className="setting-row stacked" htmlFor="persona-select">
+        <span>Active persona (managed by the server)</span>
+        <select
+          id="persona-select"
+          value={activePersona}
+          onChange={(event) => void switchPersona(event.target.value)}
+        >
+          {personaPicker.length === 0 && <option value={activePersona}>{activePersona}</option>}
+          {personaPicker.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name} ({item.id})
+            </option>
+          ))}
+        </select>
+      </label>
+      {status && <p className="setting-help">{status}</p>}
+      <details>
+        <summary>Advanced: edit the active persona</summary>
       <label className="setting-row stacked" htmlFor="persona-name">
         <span>Name</span>
         <input
@@ -1550,6 +1396,7 @@ function PersonaSettingsPanel({
         </button>
         {status && <span role="status">{status}</span>}
       </div>
+          </details>
     </section>
   );
 }
@@ -1688,7 +1535,8 @@ function ChatConfiguration({
   const save = async () => {
     try {
       await invoke('secure_store_set', { key: 'deepseek_api_key', value: apiKey });
-      onStatus('Settings saved securely.');
+      void saveServerConfig({ apiKey });
+      onStatus('Saved to the server and the local keychain.');
     } catch {
       onStatus('Unable to save the API key securely.');
     }

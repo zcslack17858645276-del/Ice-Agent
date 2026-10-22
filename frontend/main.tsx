@@ -2,7 +2,6 @@ import { Component, StrictMode, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { loadImportedCharacters } from './avatar/imported';
-import { invoke } from '@tauri-apps/api/core';
 import './styles.css';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { message: string | null }> {
@@ -40,10 +39,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { message: string
   }
 }
 
-void invoke('server:start', { port: 8787 })
-  .catch(() => undefined)
-  .then(() => loadImportedCharacters())
-  .finally(() => {
+void loadImportedCharacters().finally(() => {
   createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>

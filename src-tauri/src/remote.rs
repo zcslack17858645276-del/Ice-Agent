@@ -712,3 +712,20 @@ pub fn server_status(state: tauri::State<'_, RemoteState>) -> Result<Value, Stri
         .unwrap_or_default();
     Ok(json!({ "running": running, "port": port, "token": token, "root": root().to_string_lossy() }))
 }
+
+
+/// Reads the standalone server config so clients can discover base URL + token.
+#[tauri::command(rename = "server:local_config")]
+pub fn server_local_config() -> Result<Value, String> {
+    let path = root().join("config.json");
+    let text = std::fs::read_to_string(path).map_err(|error| format!("config missing: {error}"))?;
+    let value: Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
+        .map_err(|error| format!("config invalid: {error}"))?;
+    let port = value.get("port").and_then(|item| item.as_u64()).unwrap_or(DEFAULT_PORT as u64);
+    Ok(json!({
+        "base": format!("http://127.0.0.1:{port}"),
+        "token": value.get("token").and_then(|item| item.as_str()).unwrap_or_default(),
+        "model": value.get("model").and_then(|item| item.as_str()).unwrap_or("deepseek-chat"),
+        "persona": value.get("persona").and_then(|item| item.as_str()).unwrap_or_default(),
+    }))
+}

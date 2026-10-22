@@ -1,88 +1,66 @@
-import { invoke } from '@tauri-apps/api/core';
 import type { ASRProvider, ASRResult, CapturedAudio, VoiceSettings } from './types.ts';
 import { VoiceSessionError } from './types.ts';
+import { blobToBase64, voiceServer } from './serverVoice.ts';
 
-type TranscriptionConfig = Pick<VoiceSettings, 'whisperBaseUrl' | 'whisperModel'>;
+type TranscriptionConfig = unknown;
 type InvokeCommand = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
 
-type WhisperResponse = {
-  text: string;
-  language?: string | null;
-  segments?: Array<{ text: string; startMs: number; endMs: number }>;
+type TranscriptionResponse = {
+  text?: string;
+  error?: string;
 };
 
+/**
+ * Speech recognition through the standalone Ice Agent server (`POST /v1/asr`).
+ * The server owns the Whisper endpoint, clients only send audio.
+ */
 export class WhisperASRProvider implements ASRProvider {
   private readonly getConfig: () => TranscriptionConfig;
   private readonly invokeCommand: InvokeCommand;
 
-  constructor(getConfig: () => TranscriptionConfig, invokeCommand: InvokeCommand = invoke) {
+  constructor(getConfig: () => TranscriptionConfig, invokeCommand?: InvokeCommand) {
     this.getConfig = getConfig;
-    this.invokeCommand = invokeCommand;
+    this.invokeCommand = invokeCommand ?? (async () => undefined as never);
+    void this.invokeCommand;
   }
 
   async transcribe(audio: CapturedAudio, signal: AbortSignal): Promise<ASRResult> {
     if (signal.aborted) throw cancelledError();
-    if (!audio.data.size)
+    if (!audio.data.size) {
       throw new VoiceSessionError({
         code: 'recognition_failed',
         message: 'No audio was captured.',
         retryable: false
       });
-
-    const requestId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
-    const config = this.getConfig();
-    const data = Array.from(new Uint8Array(await audio.data.arrayBuffer()));
-    if (signal.aborted) throw cancelledError();
-
-    let removeAbortListener = () => {};
-    const aborted = new Promise<never>((_resolve, reject) => {
-      const onAbort = () => {
-        void this.invokeCommand('voice:cancel_transcription', { requestId }).catch(() => {});
-        reject(cancelledError());
-      };
-      signal.addEventListener('abort', onAbort, { once: true });
-      removeAbortListener = () => signal.removeEventListener('abort', onAbort);
-      if (signal.aborted) onAbort();
-    });
+    }
 
     try {
-      const response = await Promise.race([
-        this.invokeCommand<WhisperResponse>('voice:transcribe', {
-          request: {
-            request_id: requestId,
-            base_url: config.whisperBaseUrl,
-            model: config.whisperModel,
-            content_type: audio.data.type || audio.format,
-            data
-          }
-        }),
-        aborted
-      ]);
+      const [server, base64] = await Promise.all([voiceServer(), blobToBase64(audio.data)]);
       if (signal.aborted) throw cancelledError();
-      if (typeof response?.text !== 'string') throw invalidResponseError();
-      return {
-        text: response.text,
-        language: response.language || 'zh',
-        confidence: null,
-        segments: Array.isArray(response.segments)
-          ? response.segments.map((segment) => ({
-              text: segment.text,
-              startMs: segment.startMs,
-              endMs: segment.endMs
-            }))
-          : []
-      };
+      const response = await fetch(`${server.base}/v1/asr`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${server.token}`
+        },
+        body: JSON.stringify({ audio: base64, mime: audio.data.type || audio.format }),
+        signal
+      });
+      if (signal.aborted) throw cancelledError();
+      if (!response.ok) throw new Error(`server ${response.status}`);
+      const payload = (await response.json()) as TranscriptionResponse;
+      if (signal.aborted) throw cancelledError();
+      if (typeof payload.text !== 'string') throw invalidResponseError();
+      return { text: payload.text, language: 'zh', confidence: null, segments: [] };
     } catch (error) {
       if (error instanceof VoiceSessionError) throw error;
       if (signal.aborted) throw cancelledError();
       throw new VoiceSessionError({
         code: 'network',
-        message: 'Unable to reach the local Whisper service. Check that it is running.',
+        message: 'Unable to reach the Ice Agent server for speech recognition.',
         retryable: true,
         details: error
       });
-    } finally {
-      removeAbortListener();
     }
   }
 }
@@ -98,7 +76,7 @@ function cancelledError() {
 function invalidResponseError() {
   return new VoiceSessionError({
     code: 'invalid_response',
-    message: 'The Whisper service returned an invalid transcription.',
+    message: 'The speech server returned an invalid transcription.',
     retryable: false
   });
 }

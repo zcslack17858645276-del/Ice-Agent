@@ -6,7 +6,7 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['dist', 'src-tauri/target', 'assets/**', '.ref/**', '.tmp/**', 'frontend/avatar/live2d/framework/**', 'mobile/**', 'tools/**']
+    ignores: ['dist', 'src-tauri/target', 'assets/**', '.ref/**', '.tmp/**', 'frontend/avatar/live2d/framework/**', 'mobile/**', 'tools/**', 'server/**']
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

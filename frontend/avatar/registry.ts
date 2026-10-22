@@ -1,77 +1,34 @@
-import manifest from './manifest.json';
 import type { AvatarAsset, PetState } from './types';
 
-const assetUrls: Record<string, string> = {
-  whale: new URL('../../assets/static/whale.png', import.meta.url).href,
-  sigrika: new URL('../../assets/static/sigrika.png', import.meta.url).href,
-  dania: new URL('../../assets/static/dania.png', import.meta.url).href
-};
+/**
+ * Characters live on the Ice Agent server (`D:\IceAgent\characters`) and are
+ * published by `GET /v1/characters`; nothing is bundled into the client build.
+ */
+const transparentPng =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
-type ManifestCharacter = {
-  id: string;
-  name: string;
-  author: string;
-  license: string;
-  source: string;
-  asset: string;
-  resolution: number;
-  sizeBytes: number;
-  states: AvatarAsset['states'];
-};
+const placeholderStates: AvatarAsset['states'] = {
+  IDLE: { durationMs: 2400, loop: true, className: 'idle' },
+  THINKING: { durationMs: 1400, loop: false, className: 'thinking' },
+  HAPPY: { durationMs: 1100, loop: false, className: 'happy' },
+  SAD: { durationMs: 1500, loop: false, className: 'sad' },
+  WORKING: { durationMs: 1800, loop: true, className: 'working' },
+  SLEEPING: { durationMs: 3000, loop: true, className: 'sleeping' }
+} as AvatarAsset['states'];
 
-const staticCharacters = (manifest.characters as ManifestCharacter[]).map((character) => {
-  const src = assetUrls[character.id];
-  if (!src) throw new Error(`No bundled avatar asset registered for '${character.id}'.`);
-  return {
-    id: character.id,
-    characterId: character.id,
-    name: character.name,
-    resolution: character.resolution,
-    sizeBytes: character.sizeBytes,
-    src,
-    fallbackSrc: src,
-    license: { author: character.author, license: character.license, source: character.source },
-    states: character.states
-  } satisfies AvatarAsset;
-});
+const placeholder: AvatarAsset = {
+  id: 'placeholder',
+  characterId: 'placeholder',
+  name: 'No character',
+  resolution: 1,
+  sizeBytes: 0,
+  src: transparentPng,
+  fallbackSrc: transparentPng,
+  license: { author: '-', license: '-', source: 'server offline' },
+  states: placeholderStates
+} as AvatarAsset;
 
-/** Cubism models exported by psd2live; their states are motion groups. */
-const cubismCharacters: AvatarAsset[] = [
-  {
-    id: 'mornye',
-    characterId: 'mornye',
-    name: 'Mornye',
-    resolution: 4096,
-    sizeBytes: 0,
-    src: new URL(
-      '../../assets/live2d/mornye/mornye-psd2live/mornye.model3.json',
-      import.meta.url
-    ).href,
-    fallbackSrc: new URL('../../assets/static/whale.png', import.meta.url).href,
-    license: { author: 'PSD2Live export', license: 'Personal use', source: 'assets/live2d/mornye' },
-    states: {},
-    live2d: true,
-    motions: ['Idle', 'Blink', 'Nod', 'Shake']
-  },
-  {
-    id: 'sigrika-live2d',
-    characterId: 'sigrika',
-    name: 'Sigrika (Live2D)',
-    resolution: 4096,
-    sizeBytes: 0,
-    src: new URL(
-      '../../assets/live2d/sigrika/sigrika-psd2live/sigrika.model3.json',
-      import.meta.url
-    ).href,
-    fallbackSrc: new URL('../../assets/static/sigrika.png', import.meta.url).href,
-    license: { author: 'PSD2Live export', license: 'Personal use', source: 'assets/live2d/sigrika' },
-    states: {},
-    live2d: true,
-    motions: ['Idle', 'Blink', 'Nod', 'Shake']
-  }
-];
-
-let characters: AvatarAsset[] = [...staticCharacters, ...cubismCharacters];
+let characters: AvatarAsset[] = [];
 
 export const AvatarRegistry = {
   registerImported: (assets: AvatarAsset[]) => {
@@ -90,7 +47,10 @@ export const AvatarRegistry = {
     return (
       candidates.find((asset) => asset.states[state] && asset.resolution >= minResolution) ??
       candidates[0] ??
-      characters[0]
+      characters[0] ??
+      placeholder
     );
   }
 };
+
+export { placeholder };
