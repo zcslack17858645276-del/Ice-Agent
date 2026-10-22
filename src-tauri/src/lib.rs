@@ -1046,6 +1046,107 @@ fn resolve_dsh() -> Result<String, CommandError> {
     }
 }
 
+
+fn resolve_codex_js() -> Result<String, CommandError> {
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        candidates.push(
+            std::path::Path::new(&appdata)
+                .join("npm")
+                .join("node_modules")
+                .join("@openai")
+                .join("codex")
+                .join("bin")
+                .join("codex.js"),
+        );
+    }
+    candidates.push(std::path::PathBuf::from(
+        "D:\\nodejs\\node_global\\node_modules\\@openai\\codex\\bin\\codex.js",
+    ));
+    for candidate in candidates {
+        if candidate.exists() {
+            return Ok(candidate.to_string_lossy().to_string());
+        }
+    }
+    Err(CommandError::Configuration(
+        "Codex CLI not found (npm i -g @openai/codex).".into(),
+    ))
+}
+
+fn map_codex_event(value: serde_json::Value) -> serde_json::Value {
+    let kind = value.get("type").and_then(|item| item.as_str()).unwrap_or("");
+    match kind {
+        "thread.started" => serde_json::json!({
+            "type": "session",
+            "sessionId": value.get("thread_id").cloned().unwrap_or_default(),
+        }),
+        "turn.started" => serde_json::json!({ "type": "status", "phase": "turn_start" }),
+        "turn.completed" => {
+            let usage = value.get("usage").cloned().unwrap_or(serde_json::json!({}));
+            let total = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0)
+                + usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+            serde_json::json!({
+                "type": "status",
+                "phase": "turn_end",
+                "usage": { "totalTokens": total },
+            })
+        }
+        "item.completed" => {
+            let item = value.get("item").cloned().unwrap_or(serde_json::json!({}));
+            let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            match item_type {
+                "agent_message" => serde_json::json!({
+                    "type": "final",
+                    "text": item.get("text").cloned().unwrap_or_default(),
+                }),
+                "reasoning" => serde_json::json!({
+                    "type": "thinking",
+                    "text": item.get("text").cloned().unwrap_or_default(),
+                }),
+                "error" => {
+                    let message = item.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                    if message.contains("unrecognized configuration setting") {
+                        serde_json::json!({ "type": "noop" })
+                    } else {
+                        serde_json::json!({ "type": "stderr", "text": message })
+                    }
+                }
+                "command_execution" | "tool_call" => serde_json::json!({
+                    "type": "tool_call",
+                    "tool": item.get("command").and_then(|v| v.as_str()).unwrap_or("command"),
+                    "input": item.get("command").cloned().unwrap_or_default(),
+                    "callId": item.get("id").cloned().unwrap_or_default(),
+                }),
+                _ => value,
+            }
+        }
+        _ => value,
+    }
+}
+
+
+#[tauri::command(rename = "task:run_command")]
+fn task_run_command(
+    command: String,
+    args: Vec<String>,
+    cwd: Option<String>,
+) -> Result<(), CommandError> {
+    // Launched detached through `start` so the application survives after the
+    // task process exits (GUI apps must not be children of Codex).
+    let mut cmd = std::process::Command::new("cmd");
+    cmd.arg("/C").arg("start").arg("").arg(&command).args(&args);
+    if let Some(dir) = cwd.filter(|value| !value.trim().is_empty()) {
+        cmd.current_dir(dir);
+    }
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW);
+    cmd.spawn()
+        .map(|_| ())
+        .map_err(|error| CommandError::Configuration(format!("Unable to launch: {error}")))
+}
+
 #[tauri::command(rename = "task:start")]
 async fn task_start(
     app: AppHandle,
@@ -1053,47 +1154,49 @@ async fn task_start(
     prompt: String,
     session_id: Option<String>,
     workspace: Option<String>,
+    engine: Option<String>,
 ) -> Result<serde_json::Value, CommandError> {
     task_log(&app, &format!("task_start invoked, prompt len={}", prompt.len()));
     if prompt.trim().is_empty() {
         return Err(CommandError::Configuration("Task prompt is empty.".into()));
     }
-    let key = secure_store_get("deepseek_api_key".into())?.ok_or_else(|| {
-        CommandError::Configuration(
-            "Configure the DeepSeek API key in Chat Configuration before running tasks.".into(),
-        )
-    })?;
-    task_log(&app, "deepseek key ok");
-    let dsh = match resolve_dsh() {
-        Ok(path) => {
-            task_log(&app, &format!("resolved dsh: {path}"));
-            path
-        }
-        Err(error) => {
-            task_log(&app, &format!("resolve dsh failed: {error}"));
-            return Err(error);
-        }
-    };
+    let engine = engine.unwrap_or_else(|| "codex".to_string());
     let cwd = workspace.unwrap_or_else(|| "D:\\codex\\workspace".to_string());
     std::fs::create_dir_all(&cwd).map_err(|error| {
         CommandError::Configuration(format!("Unable to create the task workspace: {error}"))
     })?;
-    let mut args: Vec<String> = vec!["--profile".into(), "headless".into(), "--json".into()];
-    if let Some(id) = session_id.filter(|value| !value.trim().is_empty()) {
-        args.push("--session-id".into());
-        args.push(id);
-    }
-    // The Electron-based dsh shim does not reliably read a piped stdin, so the
-    // task goes in as one positional argument with newlines flattened.
-    args.push(prompt.split_whitespace().collect::<Vec<_>>().join(" "));
 
-    let mut command = std::process::Command::new("cmd");
+    let flattened = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    let resume_id = session_id.filter(|value| !value.trim().is_empty());
+    // `codex exec resume` rejects -C/-s; it reuses the session's own settings.
+    let args: Vec<String> = match resume_id {
+        Some(id) => vec![
+            "exec".into(),
+            "resume".into(),
+            id,
+            "--json".into(),
+            "--skip-git-repo-check".into(),
+            flattened,
+        ],
+        None => vec![
+            "exec".into(),
+            "--json".into(),
+            "--skip-git-repo-check".into(),
+            "-C".into(),
+            cwd.clone(),
+            "-s".into(),
+            "danger-full-access".into(),
+            flattened,
+        ],
+    };
+
+    let codex = resolve_codex_js()?;
+    task_log(&app, &format!("engine={engine} codex={codex}"));
+    let mut command = std::process::Command::new("node");
     command
-        .arg("/C")
-        .arg(&dsh)
+        .arg(&codex)
         .args(&args)
         .current_dir(&cwd)
-        .env("DEEPSEEK_API_KEY", key)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -1119,6 +1222,7 @@ async fn task_start(
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let app_handle = app.clone();
+    let engine_for_reader = engine.clone();
     std::thread::spawn(move || {
         let err_handle = app_handle.clone();
         let err_thread = std::thread::spawn(move || {
@@ -1155,8 +1259,9 @@ async fn task_start(
                         let _ = std::io::Write::write_all(&mut file, format!("{line}\n").as_bytes());
                     }
                 }
-                let event = serde_json::from_str::<serde_json::Value>(&line)
+                let parsed = serde_json::from_str::<serde_json::Value>(&line)
                     .unwrap_or_else(|_| serde_json::json!({ "type": "raw", "text": line }));
+                let event = if engine_for_reader == "codex" { map_codex_event(parsed) } else { parsed };
                 if let Some(task_state) = app_handle.try_state::<TaskRunState>() {
                     if let Ok(mut guard) = task_state.0.lock() {
                         guard.events.push(event.clone());
@@ -1699,7 +1804,6 @@ pub fn run() {
         .manage(VoiceTranscriptionRequests::default())
         .manage(VoiceSynthesisRequests::default())
         .manage(PetWindowState::default())
-        .manage(TaskRunState::default())
         .manage(remote::RemoteState::default())
         .setup(|app| {
             let _ = data_dir(app.handle());
@@ -1732,7 +1836,6 @@ pub fn run() {
             window_drag,
             window_drag_current,
             window_set_pet_scale,
-            task_start,
             remote::server_local_config,
             remote::server_start,
             remote::server_stop,
@@ -1745,8 +1848,6 @@ pub fn run() {
             remote::character_list,
             remote::character_import,
             remote::character_delete,
-            task_poll,
-            task_stop,
             window_set_menu_open,
             window_minimize_current,
             window_toggle_maximize_current,

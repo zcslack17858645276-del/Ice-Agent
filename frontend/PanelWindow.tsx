@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AvatarRegistry } from './avatar/registry';
 import { Live2DCanvas } from './avatar/live2d/Live2DCanvas';
-import { TaskPanel } from './TaskPanel';
 import { importFiles, loadImportedCharacters } from './avatar/imported';
 import { applyTheme, readTheme, saveTheme, type Theme } from './theme';
 import { saveServerConfig } from './serverConfig';
@@ -326,9 +325,6 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
-  const [chatMode, setChatMode] = useState<'chat' | 'task'>(
-    () => (localStorage.getItem('ice-agent.chat-mode.v1') === 'task' ? 'task' : 'chat')
-  );
   const [draftCharacterId, setDraftCharacterId] = useState(preferences.characterId);
   const draftAsset = AvatarRegistry.find(draftCharacterId, 'IDLE', expression);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -604,7 +600,7 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
   }, []);
 
   return (
-    <main className={`panel-window${maximized ? ' is-maximized' : ''}${kind === 'chat' && chatMode === 'task' ? ' task-mode' : ''}${kind === 'chat' && chatMode === 'chat' && showSessions ? ' rail-open' : ''}`}>
+    <main className={`panel-window${maximized ? ' is-maximized' : ''}${kind === 'chat' && showSessions ? ' rail-open' : ''}`}>
       <header
         className="panel-window-header"
         onPointerDown={(event) => {
@@ -663,30 +659,6 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
             </p>
           </div>
         </div>
-        {kind === 'chat' && (
-          <div className="chat-mode" role="group" aria-label="Chat mode">
-            <button
-              type="button"
-              className={chatMode === 'chat' ? 'active' : ''}
-              onClick={() => {
-                setChatMode('chat');
-                localStorage.setItem('ice-agent.chat-mode.v1', 'chat');
-              }}
-            >
-              Chat
-            </button>
-            <button
-              type="button"
-              className={chatMode === 'task' ? 'active' : ''}
-              onClick={() => {
-                setChatMode('task');
-                localStorage.setItem('ice-agent.chat-mode.v1', 'task');
-              }}
-            >
-              Task
-            </button>
-          </div>
-        )}
         <div className="window-controls">
           <button
             type="button"
@@ -719,8 +691,7 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
           </button>
         </div>
       </header>
-      {kind === 'chat' && chatMode === 'task' && <TaskPanel />}
-      {kind === 'chat' && chatMode === 'chat' && showSessions && (
+      {kind === 'chat' && showSessions && (
         <aside className={showSessions ? 'session-drawer open' : 'session-drawer'} style={{ top: headerHeight }} aria-label="Conversations">
           <button
             type="button"

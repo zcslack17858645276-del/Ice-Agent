@@ -24,5 +24,6 @@ Ice-Agent Git Rules.md
 .tmp/
 assets/live2d/
 assets/static/
+server/admin/vendor/live2d/
 release/
 *.apk
