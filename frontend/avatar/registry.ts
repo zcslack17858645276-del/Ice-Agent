@@ -2,8 +2,9 @@ import manifest from './manifest.json';
 import type { AvatarAsset, PetState } from './types';
 
 const assetUrls: Record<string, string> = {
-  xglk: new URL('../../assets/static/xglk4.png', import.meta.url).href,
-  dny: new URL('../../assets/static/dny.png', import.meta.url).href
+  whale: new URL('../../assets/static/whale.png', import.meta.url).href,
+  sigrika: new URL('../../assets/static/sigrika.png', import.meta.url).href,
+  dania: new URL('../../assets/static/dania.png', import.meta.url).href
 };
 
 type ManifestCharacter = {
@@ -46,25 +47,50 @@ const cubismCharacters: AvatarAsset[] = [
       '../../assets/live2d/mornye/mornye-psd2live/mornye.model3.json',
       import.meta.url
     ).href,
-    fallbackSrc: new URL('../../assets/static/dny.png', import.meta.url).href,
+    fallbackSrc: new URL('../../assets/static/whale.png', import.meta.url).href,
     license: { author: 'PSD2Live export', license: 'Personal use', source: 'assets/live2d/mornye' },
+    states: {},
+    live2d: true,
+    motions: ['Idle', 'Blink', 'Nod', 'Shake']
+  },
+  {
+    id: 'sigrika-live2d',
+    characterId: 'sigrika',
+    name: 'Sigrika (Live2D)',
+    resolution: 4096,
+    sizeBytes: 0,
+    src: new URL(
+      '../../assets/live2d/sigrika/sigrika-psd2live/sigrika.model3.json',
+      import.meta.url
+    ).href,
+    fallbackSrc: new URL('../../assets/static/sigrika.png', import.meta.url).href,
+    license: { author: 'PSD2Live export', license: 'Personal use', source: 'assets/live2d/sigrika' },
     states: {},
     live2d: true,
     motions: ['Idle', 'Blink', 'Nod', 'Shake']
   }
 ];
 
-const characters = [...staticCharacters, ...cubismCharacters];
+let characters: AvatarAsset[] = [...staticCharacters, ...cubismCharacters];
 
 export const AvatarRegistry = {
+  registerImported: (assets: AvatarAsset[]) => {
+    for (const asset of assets) {
+      if (!characters.some((item) => item.id === asset.id)) {
+        characters = [...characters, asset];
+      }
+    }
+  },
   list: (): AvatarAsset[] => characters,
-  find: (characterId: string, state: PetState, _expression: string, minResolution = 0) =>
-    characters.find(
-      (asset) =>
-        asset.characterId === characterId &&
-        asset.states[state] &&
-        asset.resolution >= minResolution
-    ) ??
-    characters.find((asset) => asset.characterId === characterId) ??
-    characters[0]
+  find: (characterId: string, state: PetState, _expression: string, minResolution = 0) => {
+    const byExactId = characters.find((asset) => asset.id === characterId);
+    const candidates = byExactId
+      ? [byExactId]
+      : characters.filter((asset) => asset.characterId === characterId);
+    return (
+      candidates.find((asset) => asset.states[state] && asset.resolution >= minResolution) ??
+      candidates[0] ??
+      characters[0]
+    );
+  }
 };

@@ -2,39 +2,129 @@
   "version": 1,
   "characters": [
     {
-      "id": "xglk",
-      "name": "XGLK",
+      "id": "whale",
+      "name": "Whale",
       "author": "Project supplied asset",
       "license": "Personal use",
-      "source": "assets/static/xglk4.png",
-      "asset": "../../assets/static/xglk4.png",
-      "resolution": 967,
-      "sizeBytes": 1086202,
+      "source": "assets/static/whale.png",
+      "asset": "../../assets/static/whale.png",
+      "resolution": 1858,
+      "sizeBytes": 1372345,
       "states": {
-        "IDLE": { "durationMs": 2400, "loop": true, "className": "idle" },
-        "THINKING": { "durationMs": 1400, "loop": false, "className": "thinking" },
-        "HAPPY": { "durationMs": 1100, "loop": false, "className": "happy" },
-        "SAD": { "durationMs": 1500, "loop": false, "className": "sad" },
-        "WORKING": { "durationMs": 1800, "loop": true, "className": "working" },
-        "SLEEPING": { "durationMs": 3000, "loop": true, "className": "sleeping" }
+        "IDLE": {
+          "durationMs": 2400,
+          "loop": true,
+          "className": "idle"
+        },
+        "THINKING": {
+          "durationMs": 1400,
+          "loop": false,
+          "className": "thinking"
+        },
+        "HAPPY": {
+          "durationMs": 1100,
+          "loop": false,
+          "className": "happy"
+        },
+        "SAD": {
+          "durationMs": 1500,
+          "loop": false,
+          "className": "sad"
+        },
+        "WORKING": {
+          "durationMs": 1800,
+          "loop": true,
+          "className": "working"
+        },
+        "SLEEPING": {
+          "durationMs": 3000,
+          "loop": true,
+          "className": "sleeping"
+        }
       }
     },
     {
-      "id": "dny",
-      "name": "DNY",
+      "id": "sigrika",
+      "name": "Sigrika",
       "author": "Project supplied asset",
       "license": "Personal use",
-      "source": "assets/static/dny.png",
-      "asset": "../../assets/static/dny.png",
-      "resolution": 1216,
+      "source": "assets/static/sigrika.png",
+      "asset": "../../assets/static/sigrika.png",
+      "resolution": 1627,
+      "sizeBytes": 1086202,
+      "states": {
+        "IDLE": {
+          "durationMs": 2400,
+          "loop": true,
+          "className": "idle"
+        },
+        "THINKING": {
+          "durationMs": 1400,
+          "loop": false,
+          "className": "thinking"
+        },
+        "HAPPY": {
+          "durationMs": 1100,
+          "loop": false,
+          "className": "happy"
+        },
+        "SAD": {
+          "durationMs": 1500,
+          "loop": false,
+          "className": "sad"
+        },
+        "WORKING": {
+          "durationMs": 1800,
+          "loop": true,
+          "className": "working"
+        },
+        "SLEEPING": {
+          "durationMs": 3000,
+          "loop": true,
+          "className": "sleeping"
+        }
+      }
+    },
+    {
+      "id": "dania",
+      "name": "Dania",
+      "author": "Project supplied asset",
+      "license": "Personal use",
+      "source": "assets/static/dania.png",
+      "asset": "../../assets/static/dania.png",
+      "resolution": 1888,
       "sizeBytes": 1827433,
       "states": {
-        "IDLE": { "durationMs": 2400, "loop": true, "className": "idle" },
-        "THINKING": { "durationMs": 1400, "loop": false, "className": "thinking" },
-        "HAPPY": { "durationMs": 1100, "loop": false, "className": "happy" },
-        "SAD": { "durationMs": 1500, "loop": false, "className": "sad" },
-        "WORKING": { "durationMs": 1800, "loop": true, "className": "working" },
-        "SLEEPING": { "durationMs": 3000, "loop": true, "className": "sleeping" }
+        "IDLE": {
+          "durationMs": 2400,
+          "loop": true,
+          "className": "idle"
+        },
+        "THINKING": {
+          "durationMs": 1400,
+          "loop": false,
+          "className": "thinking"
+        },
+        "HAPPY": {
+          "durationMs": 1100,
+          "loop": false,
+          "className": "happy"
+        },
+        "SAD": {
+          "durationMs": 1500,
+          "loop": false,
+          "className": "sad"
+        },
+        "WORKING": {
+          "durationMs": 1800,
+          "loop": true,
+          "className": "working"
+        },
+        "SLEEPING": {
+          "durationMs": 3000,
+          "loop": true,
+          "className": "sleeping"
+        }
       }
     }
   ]

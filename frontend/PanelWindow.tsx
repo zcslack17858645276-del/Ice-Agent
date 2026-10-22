@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AvatarRegistry } from './avatar/registry';
 import { Live2DCanvas } from './avatar/live2d/Live2DCanvas';
 import { TaskPanel } from './TaskPanel';
+import { importFiles, loadImportedCharacters } from './avatar/imported';
+import { applyTheme, readTheme, saveTheme, type Theme } from './theme';
 import { AVATAR_EXPRESSIONS, type AvatarExpression } from './avatar/types';
 import { WindowService } from './windowService';
 import { invoke } from '@tauri-apps/api/core';
@@ -220,7 +222,7 @@ function DeepSeekBalancePanel({ baseUrl }: { baseUrl: string }) {
 const preferencesKey = 'ice-agent.avatar-preferences.v1';
 const expressionKey = 'ice-agent.avatar-expression.v1';
 const defaults: Preferences = {
-  characterId: 'xglk',
+  characterId: 'whale',
   animationEnabled: true
 };
 const conversationId = 'default';
@@ -274,7 +276,7 @@ function readPreferences(): Preferences {
     if (typeof raw !== 'object' || raw === null) return defaults;
     const stored = raw as Record<string, unknown>;
     return {
-      characterId: AvatarRegistry.list().some((asset) => asset.characterId === stored.characterId)
+      characterId: AvatarRegistry.list().some((asset) => asset.id === stored.characterId || asset.characterId === stored.characterId)
         ? String(stored.characterId)
         : defaults.characterId,
       animationEnabled: stored.animationEnabled === true
@@ -291,6 +293,38 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
     return AVATAR_EXPRESSIONS.find((candidate) => candidate === value) ?? 'NEUTRAL';
   });
   const companion = AvatarRegistry.find(preferences.characterId, 'IDLE', expression);
+  const [theme, setTheme] = useState<Theme>(readTheme);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const [importStatus, setImportStatus] = useState('');
+  const [serverInfo, setServerInfo] = useState<{ running: boolean; port: number; token: string }>({
+    running: false,
+    port: 8787,
+    token: ''
+  });
+
+  useEffect(() => {
+    void loadImportedCharacters();
+    invoke<{ running: boolean; port: number; token: string }>('server:status')
+      .then(setServerInfo)
+      .catch(() => undefined);
+  }, []);
+
+  const runImport = async (files: FileList | null, kind: 'image' | 'live2d') => {
+    if (!files || files.length === 0) return;
+    setImportStatus('Importing…');
+    try {
+      const name = kind === 'image' ? files[0].name.replace(/\.[^.]+$/, '') : files[0].name;
+      const entry = await importFiles(name, kind, files);
+      setImportStatus(`Imported ${entry.name}`);
+    } catch (error) {
+      setImportStatus(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
   const [chatMode, setChatMode] = useState<'chat' | 'task'>(
     () => (localStorage.getItem('ice-agent.chat-mode.v1') === 'task' ? 'task' : 'chat')
   );
@@ -305,29 +339,91 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
     settingsScrollRef.current?.scrollTo(0, 0);
   }, []);
   const [message, setMessage] = useState('');
-  const [activeConversationId] = useState(() => {
+  const [activeConversationId, setActiveConversationId] = useState(() => {
     const shouldResume = kind === 'chat' && localStorage.getItem(resumeConversationKey) === 'true';
     return shouldResume
       ? localStorage.getItem(lastConversationKey) || conversationId
       : `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   });
-  const [messages, setMessages] = useState<ChatMessage[]>(() => {
-    const restored = memoryRepository.listMessages(activeConversationId, { limit: 100 });
-    return restored.length
-      ? restored
-          .map((item) => ({
-            id: item.id,
-            role: item.role,
-            content: item.content,
-            createdAt: item.createdAt,
-            incomplete: item.incomplete,
-            personaVersion: item.personaVersion
-          }))
-          .filter((item) => item.role !== 'system')
-      : conversationService
-          .getConversation(activeConversationId)
-          .messages.filter((item) => item.role !== 'system');
-  });
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const session = await invoke<{
+          id: string;
+          title: string;
+          messages: { role: string; content: string; ts: number }[];
+        } | null>('session:get', { id: activeConversationId });
+        if (cancelled) return;
+        const list = session?.messages ?? [];
+        if (list.length > 0) {
+          setMessages(
+            list
+              .filter((item) => item.role !== 'system')
+              .map((item, index) => ({
+                id: `${activeConversationId}-${index}`,
+                role: item.role === 'assistant' ? 'assistant' : 'user',
+                content: item.content,
+                createdAt: item.ts,
+                incomplete: false
+              })) as unknown as ChatMessage[]
+          );
+          conversationService.restoreConversation(activeConversationId, list as never);
+        }
+      } catch {
+        /* keep whatever is already in memory */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConversationId]);
+
+  const [pcSessions, setPcSessions] = useState<{ id: string; title: string }[]>([]);
+  const [showSessions, setShowSessions] = useState(false);
+
+  const [headerHeight, setHeaderHeight] = useState(58);
+  const headerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const element = headerRef.current;
+    if (!element) return;
+    const sync = () => setHeaderHeight(element.getBoundingClientRect().height);
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  const persistSessions = (next: { id: string; title: string }[]) => {
+    setPcSessions(next);
+  };
+
+  const switchSession = (id: string) => {
+    setActiveConversationId(id);
+    localStorage.setItem(lastConversationKey, id);
+    setShowSessions(false);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<{ id: string; title: string }[]>('session:list')
+      .then((list) => {
+        if (cancelled) return;
+        const mapped = list.map((item) => ({ id: item.id, title: item.title }));
+        setPcSessions(mapped);
+        if (mapped.length > 0 && !mapped.some((item) => item.id === activeConversationId)) {
+          setActiveConversationId(mapped[0].id);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConversationId]);
+
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modelConfig, setModelConfig] = useState(readModelConfig);
@@ -474,7 +570,7 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
   }, []);
 
   return (
-    <main className={`panel-window${maximized ? ' is-maximized' : ''}`}>
+    <main className={`panel-window${maximized ? ' is-maximized' : ''}${kind === 'chat' && chatMode === 'task' ? ' task-mode' : ''}${kind === 'chat' && chatMode === 'chat' && showSessions ? ' rail-open' : ''}`}>
       <header
         className="panel-window-header"
         onPointerDown={(event) => {
@@ -489,6 +585,29 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
         }}
       >
         <span className="panel-grip" aria-hidden="true" />
+        {kind === 'chat' && (
+          <button
+            type="button"
+            className="window-control panel-gear"
+            aria-label="Settings"
+            title="Settings"
+            onClick={() => WindowService.openPanel('settings').catch(console.error)}
+          >
+            <span aria-hidden="true">⚙</span>
+          </button>
+        )}
+        {kind === 'chat' && (
+          <button
+            type="button"
+            className="window-control session-toggle"
+            aria-label="Conversations"
+            title="Conversations"
+            onClick={() => setShowSessions((value) => !value)}
+          >
+            <span aria-hidden="true">&#9776;</span>
+          </button>
+        )}
+
         <div className="panel-brand">
           <span
             className={`panel-avatar${kind === 'chat' ? ' has-photo' : ''}`}
@@ -567,6 +686,55 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
         </div>
       </header>
       {kind === 'chat' && chatMode === 'task' && <TaskPanel />}
+      {kind === 'chat' && chatMode === 'chat' && showSessions && (
+        <aside className={showSessions ? 'session-drawer open' : 'session-drawer'} style={{ top: headerHeight }} aria-label="Conversations">
+          <button
+            type="button"
+            className="session-new"
+            onClick={() => {
+              void invoke<{ id: string; title: string }>('session:create', { title: '新的对话' })
+                .then((created) => {
+                  persistSessions([{ id: created.id, title: created.title }, ...pcSessions]);
+                  setActiveConversationId(created.id);
+                  setMessages([]);
+                  conversationService.restoreConversation(created.id, []);
+                  localStorage.setItem(lastConversationKey, created.id);
+                })
+                .catch(() => undefined);
+              setShowSessions(false);
+            }}
+          >
+            + 新对话
+          </button>
+          {pcSessions.map((session) => (
+            <div
+              key={session.id}
+              className={session.id === activeConversationId ? 'session-item active' : 'session-item'}
+              onClick={() => switchSession(session.id)}
+              role="button"
+              tabIndex={0}
+            >
+              <span className="session-title">{session.title}</span>
+              <button
+                type="button"
+                className="session-remove"
+                aria-label="删除会话"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void invoke('session:delete', { id: session.id });
+                  const next = pcSessions.filter((item) => item.id !== session.id);
+                  if (next.length === 0) return;
+                  persistSessions(next);
+                  if (session.id === activeConversationId) switchSession(next[0].id);
+                }}
+              >
+                &#215;
+              </button>
+            </div>
+          ))}
+        </aside>
+      )}
+
       {kind === 'chat' ? (
         <>
           <div className="chat-messages" aria-live="polite">
@@ -657,7 +825,7 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
                 );
                 for (const item of conversationService.getConversation(activeConversationId)
                   .messages)
-                  memoryRepository.saveMessage({ ...item, conversationId: activeConversationId });
+                  void invoke('session:append', { id: activeConversationId, role: item.role, content: item.content });
                 const source = conversationService
                   .getConversation(activeConversationId)
                   .messages.find((item) => item.role === 'user' && item.content === text);
@@ -780,7 +948,7 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
                         : 'character-chip'
                     }
                     onClick={() => {
-                      setDraftCharacterId(character.characterId);
+                      setDraftCharacterId(character.id ?? character.characterId);
                       setSavedFlash(false);
                     }}
                   >
@@ -817,6 +985,80 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
                   ›
                 </span>
               </button>
+              <div className="import-card">
+              <h3>Characters</h3>
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                style={{ display: 'none' }}
+                onChange={(event) => {
+                  void runImport(event.target.files, 'image');
+                  event.target.value = '';
+                }}
+              />
+              <input
+                ref={folderInputRef}
+                type="file"
+                multiple
+                style={{ display: 'none' }}
+                // @ts-expect-error non-standard but supported by Chromium/WebView2
+                webkitdirectory=""
+                onChange={(event) => {
+                  void runImport(event.target.files, 'live2d');
+                  event.target.value = '';
+                }}
+              />
+              <div className="import-actions">
+                <button type="button" onClick={() => imageInputRef.current?.click()}>
+                  Import image
+                </button>
+                <button type="button" onClick={() => folderInputRef.current?.click()}>
+                  Import Live2D folder
+                </button>
+              </div>
+              <p className="import-hint">Stored in D:\IceAgent\characters{importStatus ? ` · ${importStatus}` : ''}</p>
+              <div className="server-row">
+                <span>
+                  Server {serverInfo.running ? `on :${serverInfo.port}` : 'off'}
+                </span>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (serverInfo.running) {
+                      await invoke('server:stop');
+                      setServerInfo({ ...serverInfo, running: false });
+                    } else {
+                      const result = await invoke<{ running: boolean; port: number; token: string }>(
+                        'server:start',
+                        { port: 8787 }
+                      );
+                      setServerInfo({ running: true, port: result.port, token: result.token });
+                    }
+                  }}
+                >
+                  {serverInfo.running ? 'Stop' : 'Start'}
+                </button>
+              </div>
+              {serverInfo.token && (
+                <p className="import-hint">
+                  Token: <code>{serverInfo.token.slice(0, 8)}…</code>
+                </p>
+              )}
+            </div>
+            <label className="setting-row" htmlFor="theme-toggle">
+                <span>Dark theme</span>
+                <input
+                  id="theme-toggle"
+                  type="checkbox"
+                  checked={theme === 'dark'}
+                  onChange={(event) => {
+                    const next: Theme = event.target.checked ? 'dark' : 'light';
+                    setTheme(next);
+                    saveTheme(next);
+                  }}
+                />
+              </label>
               <label className="setting-row" htmlFor="animation-toggle">
                 <span>Animations</span>
                 <input

@@ -4,6 +4,8 @@ import { AnimationController } from './avatar/animationController';
 import { AvatarRegistry } from './avatar/registry';
 import { StaticAvatarRenderer } from './avatar/renderer';
 import { Live2DCanvas } from './avatar/live2d/Live2DCanvas';
+import { applyTheme, readTheme } from './theme';
+import { loadImportedCharacters } from './avatar/imported';
 import { AvatarStateMachine, type AvatarSnapshot } from './avatar/stateMachine';
 import { PET_STATES, type PetState } from './avatar/types';
 import { WindowService, type AppInfo } from './windowService';
@@ -15,7 +17,7 @@ type Preferences = {
   animationEnabled: boolean;
 };
 const defaultPreferences: Preferences = {
-  characterId: 'xglk',
+  characterId: 'whale',
   animationEnabled: true
 };
 const preferencesKey = 'ice-agent.avatar-preferences.v1';
@@ -53,7 +55,7 @@ function readPreferences(): Preferences {
     ) {
       const stored = raw as Record<string, unknown>;
       const characterId = AvatarRegistry.list().some(
-        (asset) => asset.characterId === stored.characterId
+        (asset) => asset.id === stored.characterId || asset.characterId === stored.characterId
       )
         ? String(stored.characterId)
         : defaultPreferences.characterId;
@@ -82,9 +84,19 @@ function PetApp() {
   const [petScale, setPetScale] = useState(readPetScale);
   const [petBox, setPetBox] = useState<{ width: number; height: number } | null>(null);
   const [menuAnchor, setMenuAnchor] = useState<number | null>(null);
+  const [theme] = useState(readTheme);
   const menuGuardRef = useRef(0);
   const live2dStageRef = useRef<{ play: (name: string) => void } | null>(null);
   const asset = AvatarRegistry.find(preferences.characterId, avatar.state, avatar.expression);
+
+  useEffect(() => {
+    applyTheme(theme);
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === 'ice-agent.theme.v1') applyTheme(event.newValue === 'dark' ? 'dark' : 'light');
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [theme]);
 
   useEffect(() => {
     WindowService.setPetScale(petScale).then(setPetBox).catch(console.error);
@@ -133,7 +145,9 @@ function PetApp() {
 
   useEffect(() => {
     const syncPanelChanges = (event: StorageEvent) => {
-      if (event.key === preferencesKey) setPreferences(readPreferences());
+      if (event.key === preferencesKey) {
+        void loadImportedCharacters().then(() => setPreferences(readPreferences()));
+      }
       if (event.key === expressionKey && event.newValue) {
         setAvatar(
           machine.transition({ type: 'avatar:set_expression', expression: event.newValue })
@@ -401,9 +415,6 @@ function PetApp() {
               />
             </div>
           </div>
-          <button onClick={() => openPanel('settings')}>
-            <span aria-hidden="true">⚙</span> Settings
-          </button>
           <button
             className="danger"
             onClick={() => {

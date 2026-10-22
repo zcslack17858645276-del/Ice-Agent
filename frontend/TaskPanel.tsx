@@ -16,6 +16,7 @@ type TaskEvent = {
 };
 
 type Entry =
+  | { kind: 'user'; text: string }
   | { kind: 'thinking'; text: string }
   | { kind: 'tool'; id: string; tool: string; input: string; result?: string; status?: string }
   | { kind: 'final'; text: string }
@@ -46,6 +47,7 @@ export function TaskPanel() {
   const [now, setNow] = useState(Date.now());
   const logRef = useRef<HTMLDivElement>(null);
   const cursorRef = useRef(0);
+  const startedRef = useRef(0);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 500);
@@ -152,7 +154,10 @@ export function TaskPanel() {
         if (cancelled) return;
         cursorRef.current = res.cursor;
         res.events.forEach((event) => handle(event));
-        if (!res.running) setRunning(false);
+        // The invoke that starts the task is queued behind this poll, so a
+        // "not running" answer right after Run only means "not started yet".
+        const graceElapsed = Date.now() - startedRef.current > 2500;
+        if (!res.running && graceElapsed) setRunning(false);
       } catch (error) {
         console.error('[task:poll]', error);
       }
@@ -167,16 +172,17 @@ export function TaskPanel() {
 
   const run = async () => {
     if (!prompt.trim() || running) return;
-    setEntries([]);
+    const nextPrompt = prompt;
+    setEntries([{ kind: 'user', text: nextPrompt }]);
     setTokens(0);
     cursorRef.current = 0;
+    startedRef.current = Date.now();
     setRunning(true);
     setStartedAt(Date.now());
     setLastEventAt(Date.now());
     setPhase('turn_start');
     setStep(0);
     setPendingTool(null);
-    const nextPrompt = prompt;
     setPrompt('');
     try {
       await invoke('task:start', { prompt: nextPrompt, sessionId, workspace });
@@ -206,6 +212,8 @@ export function TaskPanel() {
           : phase === 'turn_end'
             ? 'Finishing…'
             : 'Working…';
+  const waitingForAnswer =
+    running && !entries.some((entry) => entry.kind === 'thinking' || entry.kind === 'stream' || entry.kind === 'final' || entry.kind === 'tool');
   const statusMeta = !running
     ? ''
     : [
@@ -256,7 +264,23 @@ export function TaskPanel() {
             <span className="empty-hint">runs dsh headless · {workspace}</span>
           </div>
         )}
+        {waitingForAnswer && (
+          <div className="chat-message assistant" key="task-waiting">
+            <div className="bubble task-thinking" aria-label="thinking">
+              <span />
+              <span />
+              <span />
+            </div>
+          </div>
+        )}
         {entries.map((entry, index) => {
+          if (entry.kind === 'user') {
+            return (
+              <div className="chat-message user" key={`user-${index}`}>
+                <div className="bubble">{entry.text}</div>
+              </div>
+            );
+          }
           if (entry.kind === 'thinking') {
             return (
               <details className="task-entry thinking" key={`think-${index}`}>

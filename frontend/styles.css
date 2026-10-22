@@ -2429,3 +2429,584 @@ button {
   font-size: 9px;
   white-space: nowrap;
 }
+
+
+/* =========================================================================
+   Dark theme (primary #423588). Overrides the Sakura Milk palette in place so
+   the whole UI can switch with a single attribute on <html>.
+   ========================================================================= */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --rose-50: #241b47;
+  --rose-100: #2b2350;
+  --rose-200: #362b63;
+  --rose-300: #6b5bb5;
+  --rose-400: #8a76e0;
+  --rose-500: #a58fff;
+  --rose-600: #b9a8ff;
+  --rose-700: #cabfff;
+  --plum-900: #f3eeff;
+  --plum-700: #d8cffb;
+  --plum-500: #a99bd6;
+  --plum-300: #6f5fb0;
+  --cream: #2b2350;
+  --shadow-xs: 0 2px 6px rgba(8, 5, 24, 0.4);
+  --shadow-sm: 0 6px 16px rgba(8, 5, 24, 0.45);
+  --shadow-md: 0 12px 26px rgba(8, 5, 24, 0.5);
+  --shadow-lg: 0 20px 44px rgba(8, 5, 24, 0.55);
+}
+
+html[data-theme='dark'],
+html[data-theme='dark'] body {
+  background: transparent;
+  color: var(--plum-900);
+}
+
+html[data-theme='dark'] .panel-window {
+  background: linear-gradient(180deg, rgba(43, 34, 84, 0.97), rgba(35, 27, 70, 0.97));
+  border-color: rgba(138, 118, 224, 0.45);
+  box-shadow:
+    0 24px 60px rgba(6, 4, 20, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+html[data-theme='dark'] .panel-header,
+html[data-theme='dark'] .panel-brand,
+html[data-theme='dark'] .panel-caption {
+  background: linear-gradient(180deg, rgba(53, 42, 104, 0.98), rgba(43, 34, 84, 0.92));
+  border-bottom-color: rgba(138, 118, 224, 0.35);
+  color: var(--plum-900);
+}
+
+html[data-theme='dark'] .panel-avatar {
+  border-color: rgba(165, 143, 255, 0.5);
+  box-shadow: 0 6px 16px rgba(6, 4, 20, 0.55);
+}
+
+html[data-theme='dark'] .window-control {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(165, 143, 255, 0.35);
+  color: #d8cffb;
+}
+
+html[data-theme='dark'] .window-control:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+html[data-theme='dark'] .window-control.close:hover {
+  background: #cf6c7f;
+  color: #fff;
+}
+
+html[data-theme='dark'] .chat-mode {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(165, 143, 255, 0.35);
+}
+
+html[data-theme='dark'] .chat-mode button {
+  color: #c9b8ff;
+}
+
+html[data-theme='dark'] .chat-mode button.active {
+  background: linear-gradient(140deg, #6b5bb5, #423588);
+  color: #fff;
+}
+
+html[data-theme='dark'] .chat-messages,
+html[data-theme='dark'] .panel-body,
+html[data-theme='dark'] .settings-scroll {
+  background: transparent;
+}
+
+html[data-theme='dark'] .chat-message.assistant .bubble,
+html[data-theme='dark'] .bubble {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(165, 143, 255, 0.3);
+  color: #f3eeff;
+  box-shadow: 0 6px 16px rgba(6, 4, 20, 0.4);
+}
+
+html[data-theme='dark'] .chat-message.user .bubble {
+  background: linear-gradient(140deg, #6b5bb5, #423588);
+  color: #fff;
+}
+
+html[data-theme='dark'] .composer textarea,
+html[data-theme='dark'] .chat-composer textarea,
+html[data-theme='dark'] .task-composer textarea,
+html[data-theme='dark'] .setting-row input,
+html[data-theme='dark'] .setting-row select,
+html[data-theme='dark'] .setting-row textarea,
+html[data-theme='dark'] .settings-card input,
+html[data-theme='dark'] .settings-card select,
+html[data-theme='dark'] .settings-card textarea,
+html[data-theme='dark'] .sheet-card input {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(165, 143, 255, 0.35);
+  color: #f3eeff;
+}
+
+html[data-theme='dark'] .settings-card,
+html[data-theme='dark'] .settings-preview-card,
+html[data-theme='dark'] .character-card,
+html[data-theme='dark'] .deepseek-balance,
+html[data-theme='dark'] .task-panel,
+html[data-theme='dark'] .task-entry.tool {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(165, 143, 255, 0.3);
+  color: #f3eeff;
+}
+
+html[data-theme='dark'] .settings-card h2,
+html[data-theme='dark'] .setting-label,
+html[data-theme='dark'] .setting-row span,
+html[data-theme='dark'] .character-name {
+  color: #f3eeff;
+}
+
+html[data-theme='dark'] .setting-row,
+html[data-theme='dark'] .settings-card h2 {
+  border-color: rgba(165, 143, 255, 0.25);
+}
+
+html[data-theme='dark'] .setting-row:hover,
+html[data-theme='dark'] .setting-link:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+html[data-theme='dark'] .character-preview,
+html[data-theme='dark'] .character-stage {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+  border-color: rgba(165, 143, 255, 0.3);
+}
+
+html[data-theme='dark'] .context-menu {
+  background: linear-gradient(180deg, rgba(53, 42, 104, 0.98), rgba(43, 34, 84, 0.98));
+  border-color: rgba(138, 118, 224, 0.5);
+  box-shadow: 0 24px 56px rgba(6, 4, 20, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme='dark'] .context-menu-title {
+  color: #b9a8ff;
+  border-bottom-color: rgba(165, 143, 255, 0.35);
+}
+
+html[data-theme='dark'] .context-menu > button,
+html[data-theme='dark'] .context-menu-item {
+  color: #e6ddff;
+}
+
+html[data-theme='dark'] .context-menu > button:hover,
+html[data-theme='dark'] .context-menu-item:hover,
+html[data-theme='dark'] .context-menu-item:focus-within {
+  background: rgba(255, 255, 255, 0.09);
+  color: #fff;
+}
+
+html[data-theme='dark'] .context-menu > button > span:first-child,
+html[data-theme='dark'] .context-menu-item > span:first-child {
+  background: rgba(165, 143, 255, 0.18);
+  color: #c9b8ff;
+}
+
+html[data-theme='dark'] .context-flyout {
+  background: rgba(43, 34, 84, 0.98);
+  border-color: rgba(138, 118, 224, 0.45);
+  box-shadow: 0 22px 46px rgba(6, 4, 20, 0.55);
+}
+
+html[data-theme='dark'] .flyout-state {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(165, 143, 255, 0.3);
+  color: #e6ddff;
+}
+
+html[data-theme='dark'] .flyout-state.active {
+  background: linear-gradient(140deg, #6b5bb5, #423588);
+  color: #fff;
+}
+
+html[data-theme='dark'] .empty-state,
+html[data-theme='dark'] .empty-hint,
+html[data-theme='dark'] .panel-subtitle,
+html[data-theme='dark'] .bubble-note {
+  color: #a99bd6;
+}
+
+html[data-theme='dark'] .task-status {
+  background: rgba(255, 255, 255, 0.07);
+  color: #c9b8ff;
+}
+
+html[data-theme='dark'] .task-status-label {
+  color: #f3eeff;
+}
+
+html[data-theme='dark'] .setting-row .setting-chevron {
+  color: #a99bd6;
+}
+
+/* Desktop conversation sidebar */
+.session-toggle {
+  margin-right: 6px;
+  font-size: 13px;
+}
+
+.session-drawer {
+  position: absolute;
+  top: 68px;
+  left: 10px;
+  z-index: 6;
+  width: 232px;
+  max-height: calc(100% - 150px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 18px;
+  background: rgba(255, 252, 253, 0.98);
+  border: 1px solid rgba(226, 150, 166, 0.45);
+  box-shadow: 0 18px 40px rgba(146, 84, 99, 0.24);
+}
+
+.session-new {
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: linear-gradient(140deg, var(--rose-300), var(--rose-500));
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: rgba(253, 239, 243, 0.6);
+  cursor: pointer;
+}
+
+.session-item.active {
+  border-color: var(--rose-400);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.session-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--plum-700);
+  font-size: 11px;
+}
+
+.session-remove {
+  border: 0;
+  background: transparent;
+  color: var(--rose-600);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+html[data-theme='dark'] .session-drawer {
+  background: rgba(43, 34, 84, 0.97);
+  border-color: rgba(138, 118, 224, 0.45);
+  box-shadow: 0 18px 40px rgba(6, 4, 20, 0.55);
+}
+
+html[data-theme='dark'] .session-item {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme='dark'] .session-item.active {
+  border-color: #a58fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+html[data-theme='dark'] .session-title {
+  color: #e6ddff;
+}
+
+.import-card {
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid rgba(226, 150, 166, 0.35);
+  border-radius: 14px;
+  background: rgba(255, 252, 253, 0.7);
+}
+
+.import-card h3 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--rose-600);
+}
+
+.import-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.import-actions button,
+.server-row button {
+  padding: 7px 12px;
+  border: 1px solid rgba(226, 150, 166, 0.5);
+  border-radius: 10px;
+  background: #fffdfe;
+  color: var(--plum-700);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.import-actions button:hover,
+.server-row button:hover {
+  background: var(--rose-100);
+}
+
+.import-hint {
+  margin: 8px 0 0;
+  font-size: 9px;
+  color: var(--plum-500);
+  word-break: break-all;
+}
+
+.import-hint code {
+  color: var(--rose-600);
+}
+
+.server-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(226, 150, 166, 0.35);
+  font-size: 10px;
+  color: var(--plum-700);
+}
+
+html[data-theme='dark'] .import-card {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(165, 143, 255, 0.3);
+}
+
+html[data-theme='dark'] .import-actions button,
+html[data-theme='dark'] .server-row button {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(165, 143, 255, 0.35);
+  color: #e6ddff;
+}
+
+html[data-theme='dark'] .server-row {
+  border-top-color: rgba(165, 143, 255, 0.25);
+  color: #d8cffb;
+}
+
+/* dark header fix */
+html[data-theme='dark'] .panel-brand,
+html[data-theme='dark'] .panel-caption {
+  background: transparent;
+  border-bottom-color: transparent;
+}
+
+html[data-theme='dark'] .panel-header {
+  background: linear-gradient(180deg, rgba(45, 35, 90, 0.99), rgba(38, 29, 76, 0.99));
+  border-bottom: 1px solid rgba(138, 118, 224, 0.35);
+}
+
+/* dark readability pass */
+html[data-theme='dark'] input,
+html[data-theme='dark'] textarea,
+html[data-theme='dark'] select {
+  background: rgba(255, 255, 255, 0.07) !important;
+  color: #f3eeff !important;
+  border-color: rgba(165, 143, 255, 0.32) !important;
+}
+
+html[data-theme='dark'] input::placeholder,
+html[data-theme='dark'] textarea::placeholder {
+  color: #9c8fd0 !important;
+}
+
+html[data-theme='dark'] .memory-card,
+html[data-theme='dark'] .resume-card,
+html[data-theme='dark'] .local-services,
+html[data-theme='dark'] .deepseek-balance,
+html[data-theme='dark'] .persona-card,
+html[data-theme='dark'] .chat-resume,
+html[data-theme='dark'] .settings-card,
+html[data-theme='dark'] .preview-card,
+html[data-theme='dark'] .composer-card {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-color: rgba(165, 143, 255, 0.26) !important;
+  color: #f3eeff !important;
+}
+
+html[data-theme='dark'] .memory-card h3,
+html[data-theme='dark'] .local-services h3,
+html[data-theme='dark'] .resume-card span,
+html[data-theme='dark'] .persona-card label,
+html[data-theme='dark'] .settings-card label {
+  color: #d8cffb !important;
+}
+
+html[data-theme='dark'] .memory-card button,
+html[data-theme='dark'] .resume-card button,
+html[data-theme='dark'] .pill,
+html[data-theme='dark'] .ghost-button,
+html[data-theme='dark'] .secondary-button,
+html[data-theme='dark'] .service-button,
+html[data-theme='dark'] .refresh-button,
+html[data-theme='dark'] .deepseek-balance button {
+  background: rgba(255, 255, 255, 0.09) !important;
+  border: 1px solid rgba(165, 143, 255, 0.32) !important;
+  color: #e6ddff !important;
+}
+
+html[data-theme='dark'] .memory-card button:hover,
+html[data-theme='dark'] .resume-card button:hover,
+html[data-theme='dark'] .pill:hover {
+  background: rgba(255, 255, 255, 0.16) !important;
+}
+
+html[data-theme='dark'] .service-button.running {
+  background: rgba(120, 220, 170, 0.16) !important;
+  color: #9ff0c6 !important;
+  border-color: rgba(120, 220, 170, 0.4) !important;
+}
+
+html[data-theme='dark'] .character-tile {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(165, 143, 255, 0.28) !important;
+  color: #e6ddff !important;
+}
+
+html[data-theme='dark'] .character-tile.active {
+  background: linear-gradient(140deg, #6b5bb5, #423588) !important;
+  color: #fff !important;
+}
+
+/* brand-force: keep the settings header one continuous surface */
+html[data-theme='dark'] .panel-brand,
+html[data-theme='dark'] .panel-brand-text,
+html[data-theme='dark'] .panel-caption,
+html[data-theme='dark'] .panel-avatar {
+  background: transparent !important;
+  border-color: transparent !important;
+}
+
+/* dsh-style rail */
+.session-drawer {
+  position: absolute;
+  top: 50px;
+  left: 0;
+  bottom: 0;
+  width: 196px;
+  max-height: none;
+  height: auto;
+  padding: 10px 8px 12px;
+  border-radius: 0 18px 18px 0;
+  border-left: none;
+  transform: translateX(-102%);
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 8;
+}
+
+.session-drawer.open {
+  transform: translateX(0);
+}
+
+.session-toggle {
+  margin-right: 2px;
+}
+
+
+/* rail pushes the conversation instead of covering it */
+.panel-window .chat-messages,
+.panel-window .chat-input {
+  transition: margin-left 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.panel-window.rail-open .chat-messages,
+.panel-window.rail-open .chat-input {
+  margin-left: 196px;
+}
+
+.panel-window .session-drawer {
+  box-shadow: 10px 0 26px rgba(146, 84, 99, 0.16);
+}
+
+/* rail layering + button tint */
+.panel-window-header {
+  position: relative;
+  z-index: 6;
+}
+
+.panel-window .session-drawer {
+  top: 58px;
+  z-index: 2;
+  border-radius: 0 14px 14px 0;
+}
+
+.panel-window .chat-input {
+  border-radius: 14px;
+}
+
+.panel-window .chat-input input {
+  border-radius: 10px;
+}
+
+
+
+/* task mode hides the chat surface so the task panel owns the window */
+.panel-window.task-mode .chat-messages,
+.panel-window.task-mode .chat-input,
+.panel-window.task-mode .session-drawer {
+  display: none;
+}
+
+.panel-window.task-mode .task-panel {
+  flex: 1;
+  margin: 10px 12px 12px;
+  min-height: 0;
+}
+
+/* task mode: pending thinking bubble */
+.task-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 12px 16px;
+}
+
+.task-thinking span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--rose-400);
+  animation: task-dot 1.1s infinite ease-in-out;
+}
+
+.task-thinking span:nth-child(2) { animation-delay: 0.15s; }
+.task-thinking span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes task-dot {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.45; }
+  40% { transform: translateY(-4px); opacity: 1; }
+}
+
+html[data-theme='dark'] .task-thinking span {
+  background: #c9b8ff;
+}

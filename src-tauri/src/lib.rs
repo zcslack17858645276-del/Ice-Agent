@@ -1,3 +1,5 @@
+mod remote;
+
 use rusqlite::Connection;
 use serde::Deserialize;
 use serde::Serialize;
@@ -598,9 +600,66 @@ fn memory_initialize(app: AppHandle) -> Result<(), CommandError> {
     connection.execute_batch("BEGIN; CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER); CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id), role TEXT NOT NULL CHECK(role IN ('system','user','assistant')), content TEXT NOT NULL, created_at INTEGER NOT NULL, incomplete INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER); CREATE INDEX IF NOT EXISTS messages_conversation_time ON messages(conversation_id, created_at); CREATE TABLE IF NOT EXISTS memories (id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('preference','event','habit')), content TEXT NOT NULL, source_message_id TEXT NOT NULL REFERENCES messages(id), confidence REAL NOT NULL, privacy TEXT NOT NULL CHECK(privacy IN ('private','normal','sensitive')), status TEXT NOT NULL CHECK(status IN ('pending','confirmed','rejected','deleted')), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER, embedding_model TEXT); CREATE TABLE IF NOT EXISTS memory_tags (memory_id TEXT NOT NULL REFERENCES memories(id), tag TEXT NOT NULL, PRIMARY KEY(memory_id, tag)); CREATE TABLE IF NOT EXISTS memory_embeddings (memory_id TEXT PRIMARY KEY REFERENCES memories(id), model_version TEXT NOT NULL, vector_json TEXT NOT NULL, updated_at INTEGER NOT NULL); INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, strftime('%s','now') * 1000); COMMIT;").map_err(|error| CommandError::Configuration(format!("Memory migration failed and was rolled back: {error}")))
 }
 
+
+/// Root folder for all Ice Agent data (must not live on the system drive).
+///
+/// Resolution order:
+/// 1. `ICE_AGENT_DATA` environment variable;
+/// 2. `D:\\IceAgent` (or `E:\\IceAgent` when D: is missing);
+/// 3. legacy `%APPDATA%\\com.iceagent.desktop`.
+///
+/// On first use the legacy database/log files are copied over so upgrades keep
+/// their history.
+fn data_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, tauri::Error> {
+    let custom = std::env::var("ICE_AGENT_DATA")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from);
+
+    let candidate = custom.or_else(|| {
+        for drive in ["D:\\", "E:\\", "F:\\"] {
+            if std::path::Path::new(drive).exists() {
+                return Some(std::path::PathBuf::from(drive).join("IceAgent"));
+            }
+        }
+        None
+    });
+
+    let Some(root) = candidate else {
+        return app.path().app_data_dir();
+    };
+    if std::fs::create_dir_all(&root).is_err() {
+        return app.path().app_data_dir();
+    }
+    if let Ok(legacy) = app.path().app_data_dir() {
+        if legacy != root {
+            for name in ["memory.sqlite3", "ice-task.log", "startup.log"] {
+                let from = legacy.join(name);
+                let to = root.join(name);
+                if from.exists() && !to.exists() {
+                    let _ = std::fs::copy(&from, &to);
+                }
+            }
+        }
+    }
+    Ok(root)
+}
+
 fn credential(key: &str) -> Result<keyring::Entry, CommandError> {
     keyring::Entry::new(CREDENTIAL_SERVICE, key)
         .map_err(|_| CommandError::Credential("Secure credential storage is unavailable.".into()))
+}
+
+/// Non-command credential read shared with the HTTP server module.
+pub(crate) fn secure_key(key: &str) -> Result<Option<String>, CommandError> {
+    match credential(key)?.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(_) => Err(CommandError::Credential(
+            "Unable to read secure credentials.".into(),
+        )),
+    }
 }
 
 #[tauri::command(rename = "secure_store_get")]
@@ -698,7 +757,7 @@ async fn ai_usage(app: AppHandle) -> Result<UsageResponse, CommandError> {
         .as_secs();
     let cutoff = now.saturating_sub(30 * 24 * 3600);
     let mut records = Vec::new();
-    if let Ok(dir) = app.path().app_data_dir() {
+    if let Ok(dir) = data_dir(&app) {
         if let Ok(text) = std::fs::read_to_string(dir.join("usage.jsonl")) {
             for line in text.lines() {
                 if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
@@ -844,7 +903,7 @@ async fn ai_stream(app: AppHandle, request: ChatRequest) -> Result<Vec<BackendCh
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs();
-                if let Ok(dir) = app.path().app_data_dir() {
+                if let Ok(dir) = data_dir(&app) {
                     let _ = std::fs::create_dir_all(&dir);
                     let line = format!(
                         "{{\"ts\":{ts},\"prompt\":{prompt},\"completion\":{completion}}}\n"
@@ -911,7 +970,7 @@ struct TaskRunState(std::sync::Mutex<TaskBuffer>);
 
 /// Resolves the `dsh` launcher from PATH (npm shims resolve to a .cmd on Windows).
 fn task_log(app: &AppHandle, message: &str) {
-    if let Ok(dir) = app.path().app_data_dir() {
+    if let Ok(dir) = data_dir(&app) {
         let _ = std::fs::create_dir_all(&dir);
         if let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
@@ -1055,7 +1114,7 @@ async fn task_start(
                 if line.trim().is_empty() {
                     continue;
                 }
-                if let Ok(dir) = app_handle.path().app_data_dir() {
+                if let Ok(dir) = data_dir(&app_handle) {
                     let _ = std::fs::create_dir_all(&dir);
                     if let Ok(mut file) = std::fs::OpenOptions::new()
                         .create(true)
@@ -1610,7 +1669,9 @@ pub fn run() {
         .manage(VoiceSynthesisRequests::default())
         .manage(PetWindowState::default())
         .manage(TaskRunState::default())
+        .manage(remote::RemoteState::default())
         .setup(|app| {
+            let _ = data_dir(app.handle());
             if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
                 window.set_min_size(Some(tauri::LogicalSize::new(120.0, 1.0)))?;
                 {
@@ -1641,6 +1702,17 @@ pub fn run() {
             window_drag_current,
             window_set_pet_scale,
             task_start,
+            remote::server_start,
+            remote::server_stop,
+            remote::server_status,
+            remote::session_list,
+            remote::session_create,
+            remote::session_get,
+            remote::session_append,
+            remote::session_delete,
+            remote::character_list,
+            remote::character_import,
+            remote::character_delete,
             task_poll,
             task_stop,
             window_set_menu_open,
