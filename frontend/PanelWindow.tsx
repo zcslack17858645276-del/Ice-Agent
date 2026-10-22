@@ -3,6 +3,7 @@ import { AvatarRegistry } from './avatar/registry';
 import { Live2DCanvas } from './avatar/live2d/Live2DCanvas';
 import { importFiles, loadImportedCharacters } from './avatar/imported';
 import { applyTheme, readTheme, saveTheme, type Theme } from './theme';
+import { WorkPanel } from './WorkPanel';
 import { saveServerConfig } from './serverConfig';
 import { AVATAR_EXPRESSIONS, type AvatarExpression } from './avatar/types';
 import { WindowService } from './windowService';
@@ -336,6 +337,9 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
     settingsScrollRef.current?.scrollTo(0, 0);
   }, []);
   const [message, setMessage] = useState('');
+  const [mode, setMode] = useState<'chat' | 'work'>(
+    () => (localStorage.getItem('ice-agent.mode.v1') as 'chat' | 'work' | null) ?? 'chat'
+  );
   const [activeConversationId, setActiveConversationId] = useState(() => {
     const shouldResume = kind === 'chat' && localStorage.getItem(resumeConversationKey) === 'true';
     return shouldResume
@@ -558,6 +562,10 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
   }, [kind]);
 
   useEffect(() => {
+    localStorage.setItem('ice-agent.mode.v1', mode);
+  }, [mode]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         WindowService.closeCurrent().catch(console.error);
@@ -600,7 +608,7 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
   }, []);
 
   return (
-    <main className={`panel-window${maximized ? ' is-maximized' : ''}${kind === 'chat' && showSessions ? ' rail-open' : ''}`}>
+    <main className={`panel-window${maximized ? ' is-maximized' : ''}${kind === 'chat' && mode === 'work' ? ' mode-work' : ''}${kind === 'chat' && mode === 'chat' ? ' mode-chat' : ''}${kind === 'chat' && mode === 'chat' && showSessions ? ' rail-open' : ''}`}>
       <header
         className="panel-window-header"
         onPointerDown={(event) => {
@@ -615,17 +623,6 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
         }}
       >
         <span className="panel-grip" aria-hidden="true" />
-        {kind === 'chat' && (
-          <button
-            type="button"
-            className="window-control panel-gear"
-            aria-label="Settings"
-            title="Settings"
-            onClick={() => WindowService.openPanel('settings').catch(console.error)}
-          >
-            <span aria-hidden="true">⚙</span>
-          </button>
-        )}
         {kind === 'chat' && (
           <button
             type="button"
@@ -659,6 +656,30 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
             </p>
           </div>
         </div>
+
+        {kind === 'chat' && (
+        <div className={`panel-mode ${mode}`} role="tablist" aria-label="Mode">
+      <span className="panel-mode-thumb" aria-hidden="true" />
+    <button
+      type="button"
+      role="tab"
+      aria-selected={mode === 'chat'}
+      className={`panel-mode-button${mode === 'chat' ? ' active' : ''}`}
+      onClick={() => setMode('chat')}
+    >
+      对话
+    </button>
+    <button
+      type="button"
+      role="tab"
+      aria-selected={mode === 'work'}
+      className={`panel-mode-button${mode === 'work' ? ' active' : ''}`}
+      onClick={() => setMode('work')}
+    >
+      工作
+    </button>
+  </div>
+        )}
         <div className="window-controls">
           <button
             type="button"
@@ -690,12 +711,13 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
             <span aria-hidden="true">✕</span>
           </button>
         </div>
-      </header>
+</header>
+      {kind === 'chat' && <WorkPanel />}
       {kind === 'chat' && showSessions && (
         <aside className={showSessions ? 'session-drawer open' : 'session-drawer'} style={{ top: headerHeight }} aria-label="Conversations">
-          <button
-            type="button"
-            className="session-new"
+          <div className="session-head">
+            <span className="session-heading">会话</span>
+            <button type="button" className="session-add" aria-label="新对话"
             onClick={() => {
               void invoke<{ id: string; title: string }>('session:create', { title: '新的对话' })
                 .then((created) => {
@@ -708,9 +730,9 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
                 .catch(() => undefined);
               setShowSessions(false);
             }}
-          >
-            + 新对话
-          </button>
+            >+
+            </button>
+          </div>
           {pcSessions.map((session) => (
             <div
               key={session.id}
@@ -765,8 +787,7 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
               </div>
             )}
           </div>
-          <form
-            className="chat-input"
+          <form className="chat-input"
             onSubmit={async (event) => {
               event.preventDefault();
               if (!message.trim() || sending) return;

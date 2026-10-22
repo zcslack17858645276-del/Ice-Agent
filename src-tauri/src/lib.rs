@@ -1,4 +1,6 @@
 mod remote;
+mod codex;
+mod work;
 
 use rusqlite::Connection;
 use serde::Deserialize;
@@ -1147,6 +1149,122 @@ fn task_run_command(
         .map_err(|error| CommandError::Configuration(format!("Unable to launch: {error}")))
 }
 
+
+// ---------------------------------------------------------------- work mode
+
+fn work_engine(
+    app: &AppHandle,
+    state: &State<'_, work::WorkState>,
+) -> Result<std::sync::Arc<codex::CodexEngine>, String> {
+    let mut guard = state.engine.lock().map_err(|_| "engine lock".to_string())?;
+    if let Some(engine) = guard.as_ref() {
+        return Ok(engine.clone());
+    }
+    let handle = app.clone();
+    let sink: codex::EventSink = std::sync::Arc::new(move |event: serde_json::Value| {
+        let kind = event.get("type").and_then(|value| value.as_str()).unwrap_or("");
+        if kind == "request" {
+            let method = event.get("method").and_then(|value| value.as_str()).unwrap_or("");
+            if method.contains("requestApproval") {
+                let params = event.get("params").cloned().unwrap_or(serde_json::Value::Null);
+                let approval_id = params
+                    .get("itemId")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let request_id = event.get("id").and_then(|value| value.as_u64()).unwrap_or(0);
+                let thread_id = params
+                    .get("threadId")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if let Some(card_id) = work::card_for_thread(&thread_id) {
+                    let _ = work::bind_approval(&approval_id, &card_id);
+                    if let Some(state) = handle.try_state::<work::WorkState>() {
+                        if let Ok(mut map) = state.approvals.lock() {
+                            map.insert(approval_id.clone(), request_id);
+                        }
+                    }
+                }
+                let _ = handle.emit(
+                    "work:approval",
+                    serde_json::json!({
+                        "approvalId": approval_id,
+                        "requestId": request_id,
+                        "command": params.get("command").cloned(),
+                        "reason": params.get("reason").cloned(),
+                    }),
+                );
+                return;
+            }
+        }
+        if kind == "notification" {
+            let method = event.get("method").and_then(|value| value.as_str()).unwrap_or("");
+            let params = event.get("params").cloned().unwrap_or(serde_json::Value::Null);
+            work::apply_notification(method, &params);
+        }
+        let _ = handle.emit("work:event", event);
+    });
+    let engine = codex::CodexEngine::spawn("D:\\codex\\workspace", sink)?;
+    *guard = Some(engine.clone());
+    Ok(engine)
+}
+
+#[tauri::command(rename = "work:prepare")]
+fn work_prepare(text: String, cwd: Option<String>) -> Result<work::WorkCard, String> {
+    let cwd = cwd.unwrap_or_else(|| "D:\\codex\\workspace".to_string());
+    work::prepare(&text, &cwd)
+}
+
+#[tauri::command(rename = "work:revise")]
+fn work_revise(id: String, expected_version: u64, text: String) -> Result<work::WorkCard, String> {
+    work::revise(&id, expected_version, &text)
+}
+
+#[tauri::command(rename = "work:dismiss")]
+fn work_dismiss(id: String, expected_version: u64) -> Result<work::WorkCard, String> {
+    work::dismiss(&id, expected_version)
+}
+
+#[tauri::command(rename = "work:confirm")]
+fn work_confirm(
+    app: AppHandle,
+    state: State<'_, work::WorkState>,
+    id: String,
+    expected_version: u64,
+) -> Result<serde_json::Value, String> {
+    let engine = work_engine(&app, &state)?;
+    work::confirm(&id, expected_version, &engine)
+}
+
+#[tauri::command(rename = "work:approve")]
+fn work_approve(
+    app: AppHandle,
+    state: State<'_, work::WorkState>,
+    approval_id: String,
+    decision: String,
+) -> Result<(), String> {
+    let engine = work_engine(&app, &state)?;
+    let request_id = state
+        .approvals
+        .lock()
+        .map_err(|_| "approval lock".to_string())?
+        .get(&approval_id)
+        .copied()
+        .ok_or("unknown approval")?;
+    work::approve(&approval_id, &decision, &engine, request_id)
+}
+
+#[tauri::command(rename = "work:status")]
+fn work_status(id: String) -> Option<serde_json::Value> {
+    work::status(&id)
+}
+
+#[tauri::command(rename = "work:list")]
+fn work_list() -> Vec<work::WorkCard> {
+    work::list()
+}
+
 #[tauri::command(rename = "task:start")]
 async fn task_start(
     app: AppHandle,
@@ -1692,7 +1810,7 @@ async fn window_open_panel(app: AppHandle, panel: String) -> Result<(), CommandE
     let (panel_width, panel_height, min_width, min_height, docked) = match panel.as_str() {
         "settings" => (1120.0, 700.0, 760.0, 520.0, false),
         "chat-config" => (640.0, 660.0, 480.0, 460.0, false),
-        _ => (480.0, 680.0, 400.0, 480.0, true),
+        _ => (1080.0, 720.0, 820.0, 560.0, false),
     };
     let app_for_builder = app.clone();
     let created = tauri::async_runtime::spawn_blocking(move || {
@@ -1805,6 +1923,7 @@ pub fn run() {
         .manage(VoiceSynthesisRequests::default())
         .manage(PetWindowState::default())
         .manage(remote::RemoteState::default())
+        .manage(work::WorkState::default())
         .setup(|app| {
             let _ = data_dir(app.handle());
             if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
@@ -1836,6 +1955,13 @@ pub fn run() {
             window_drag,
             window_drag_current,
             window_set_pet_scale,
+            work_prepare,
+            work_revise,
+            work_dismiss,
+            work_confirm,
+            work_approve,
+            work_status,
+            work_list,
             remote::server_local_config,
             remote::server_start,
             remote::server_stop,
