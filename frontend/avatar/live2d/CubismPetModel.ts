@@ -35,6 +35,9 @@ async function fetchBuffer(url: string): Promise<ArrayBuffer> {
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image();
+    // Textures come from the local character server (a different origin than the
+    // app), so the image must be CORS-clean before WebGL can upload it.
+    image.crossOrigin = 'anonymous';
     image.onload = () => resolve(image);
     image.onerror = () => reject(new Error(`Live2D texture missing: ${url}`));
     image.src = url;

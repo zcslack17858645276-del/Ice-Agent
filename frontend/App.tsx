@@ -10,6 +10,9 @@ import { AvatarStateMachine, type AvatarSnapshot } from './avatar/stateMachine';
 import { PET_STATES, type PetState } from './avatar/types';
 import { WindowService, type AppInfo } from './windowService';
 import { PanelWindow } from './PanelWindow';
+import { WorkPanel } from './work/WorkPanel';
+import { ModeSwitch } from './work/ModeSwitch';
+import { activateMode, modeStorageKey, readMode, type AppMode } from './mode';
 import { VoiceServices } from './voice/services';
 
 type Preferences = {
@@ -76,6 +79,7 @@ function PetApp() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [preferences, setPreferences] = useState(readPreferences);
+  const [mode, setMode] = useState<AppMode>(readMode);
   const machine = useMemo(() => new AvatarStateMachine(), []);
   const controller = useMemo(() => new AnimationController(), []);
   const [avatar, setAvatar] = useState<AvatarSnapshot>(machine.getSnapshot());
@@ -97,6 +101,27 @@ function PetApp() {
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }, [theme]);
+
+  useEffect(() => {
+    const onMode = (event: StorageEvent) => {
+      if (event.key !== modeStorageKey) return;
+      setMode(event.newValue === 'work' ? 'work' : 'chat');
+    };
+    window.addEventListener('storage', onMode);
+    return () => window.removeEventListener('storage', onMode);
+  }, []);
+
+  useEffect(() => {
+    // The pet follows the mode: busy while work runs, relaxed back in chat.
+    setAvatar(
+      machine.transition({
+        type: 'avatar:set_state',
+        state: mode === 'work' ? 'WORKING' : 'IDLE',
+        reason: `mode:${mode}`,
+        priority: 0
+      })
+    );
+  }, [machine, mode]);
 
   useEffect(() => {
     WindowService.setPetScale(petScale).then(setPetBox).catch(console.error);
@@ -240,9 +265,17 @@ function PetApp() {
     }
   };
 
-  const openPanel = (nextPanel: 'chat' | 'settings') => {
+  const openPanel = (nextPanel: 'chat' | 'settings' | 'work') => {
     setMenuOpen(false);
     run(() => WindowService.openPanel(nextPanel));
+  };
+
+  const changeMode = (next: AppMode) => {
+    if (next === mode) return;
+    setMenuOpen(false);
+    // Switching from the pet menu only changes the mode; the console is opened
+    // from the menu entry, not as a side effect of moving the slider.
+    activateMode(next, { openPanel: false });
   };
 
   return (
@@ -357,12 +390,18 @@ function PetApp() {
             <span aria-hidden="true">♡</span>
             {asset.name}
           </span>
+          <div className="context-menu-mode">
+            <ModeSwitch compact mode={mode} onChange={changeMode} />
+          </div>
           <button onClick={() => openPanel('settings')}>
             <span aria-hidden="true">⚙</span>
             Settings
           </button>
           <button onClick={() => openPanel('chat')}>
             <span aria-hidden="true">✉</span> Chat
+          </button>
+          <button onClick={() => openPanel('work')}>
+            <span aria-hidden="true">✧</span> Work console
           </button>
           <div className="context-menu-item" tabIndex={0}>
             <span aria-hidden="true">◈</span>
@@ -445,7 +484,10 @@ export default function App() {
         ? 'settings'
         : windowLabel === 'panel-chat-config'
           ? 'chat-config'
-          : null);
+          : windowLabel === 'panel-work'
+            ? 'work'
+            : null);
+  if (panel === 'work') return <WorkPanel />;
   if (panel === 'chat' || panel === 'settings' || panel === 'chat-config')
     return <PanelWindow kind={panel} />;
   return <PetApp />;

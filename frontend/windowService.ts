@@ -48,7 +48,7 @@ export const WindowService = {
     }),
   minimizeCurrent: () => command<void>('window:minimize_current'),
   toggleMaximizeCurrent: () => command<boolean>('window:toggle_maximize_current'),
-  openPanel: (panel: 'chat' | 'settings' | 'chat-config') =>
+  openPanel: (panel: 'chat' | 'settings' | 'chat-config' | 'work') =>
     invoke<void>('window:open_panel', { panel }).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
       throw new WindowServiceError(message || 'The requested panel could not be opened.');

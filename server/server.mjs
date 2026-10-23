@@ -960,6 +960,9 @@ async function route(req, res) {
       const { spawn } = await import('node:child_process');
       const child = spawn('wsl', ['-e', 'bash', '-lc', command], {
         detached: true,
+        // Without this Windows gives the console child (wsl.exe) a visible
+        // console window every time the pet autostarts the voice services.
+        windowsHide: true,
         stdio: 'ignore'
       });
       child.unref();

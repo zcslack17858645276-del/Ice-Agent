@@ -3,7 +3,6 @@ import { AvatarRegistry } from './avatar/registry';
 import { Live2DCanvas } from './avatar/live2d/Live2DCanvas';
 import { importFiles, loadImportedCharacters } from './avatar/imported';
 import { applyTheme, readTheme, saveTheme, type Theme } from './theme';
-import { WorkPanel } from './WorkPanel';
 import { saveServerConfig } from './serverConfig';
 import { AVATAR_EXPRESSIONS, type AvatarExpression } from './avatar/types';
 import { WindowService } from './windowService';
@@ -40,6 +39,8 @@ import {
   type VoiceEvent,
   type VoiceSettings
 } from './voice/index.ts';
+import { activateMode, readMode, type AppMode } from './mode';
+import { ModeSwitch } from './work/ModeSwitch';
 
 type PanelKind = 'chat' | 'settings' | 'chat-config';
 type Preferences = {
@@ -326,6 +327,23 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
+
+  // The chat drawer *is* the chat surface: the slider reflects this window, not
+  // the global mode (opening chat while the pet is in work mode used to show
+  // "Work" here, which read as a bug).
+  const mode: AppMode = kind === 'chat' ? 'chat' : readMode();
+
+  const changeMode = (next: AppMode) => {
+    if (next === mode) return;
+    activateMode(next, { openPanel: false });
+    if (next === 'work') {
+      // The console takes over: this drawer is the chat surface and closes once
+      // the work window exists, so the switch never leaves two empty windows.
+      WindowService.openPanel('work')
+        .then(() => WindowService.closeCurrent().catch(console.error))
+        .catch(console.error);
+    }
+  };
   const [draftCharacterId, setDraftCharacterId] = useState(preferences.characterId);
   const draftAsset = AvatarRegistry.find(draftCharacterId, 'IDLE', expression);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -337,9 +355,6 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
     settingsScrollRef.current?.scrollTo(0, 0);
   }, []);
   const [message, setMessage] = useState('');
-  const [mode, setMode] = useState<'chat' | 'work'>(
-    () => (localStorage.getItem('ice-agent.mode.v1') as 'chat' | 'work' | null) ?? 'chat'
-  );
   const [activeConversationId, setActiveConversationId] = useState(() => {
     const shouldResume = kind === 'chat' && localStorage.getItem(resumeConversationKey) === 'true';
     return shouldResume
@@ -562,10 +577,6 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
   }, [kind]);
 
   useEffect(() => {
-    localStorage.setItem('ice-agent.mode.v1', mode);
-  }, [mode]);
-
-  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         WindowService.closeCurrent().catch(console.error);
@@ -608,7 +619,7 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
   }, []);
 
   return (
-    <main className={`panel-window${maximized ? ' is-maximized' : ''}${kind === 'chat' && mode === 'work' ? ' mode-work' : ''}${kind === 'chat' && mode === 'chat' ? ' mode-chat' : ''}${kind === 'chat' && mode === 'chat' && showSessions ? ' rail-open' : ''}`}>
+    <main className={`panel-window${maximized ? ' is-maximized' : ''}${kind === 'chat' && showSessions ? ' rail-open' : ''}`}>
       <header
         className="panel-window-header"
         onPointerDown={(event) => {
@@ -656,30 +667,7 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
             </p>
           </div>
         </div>
-
-        {kind === 'chat' && (
-        <div className={`panel-mode ${mode}`} role="tablist" aria-label="Mode">
-      <span className="panel-mode-thumb" aria-hidden="true" />
-    <button
-      type="button"
-      role="tab"
-      aria-selected={mode === 'chat'}
-      className={`panel-mode-button${mode === 'chat' ? ' active' : ''}`}
-      onClick={() => setMode('chat')}
-    >
-      对话
-    </button>
-    <button
-      type="button"
-      role="tab"
-      aria-selected={mode === 'work'}
-      className={`panel-mode-button${mode === 'work' ? ' active' : ''}`}
-      onClick={() => setMode('work')}
-    >
-      工作
-    </button>
-  </div>
-        )}
+        {kind === 'chat' && <ModeSwitch mode={mode} onChange={changeMode} />}
         <div className="window-controls">
           <button
             type="button"
@@ -712,8 +700,7 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
           </button>
         </div>
 </header>
-      {kind === 'chat' && <WorkPanel />}
-      {kind === 'chat' && showSessions && (
+            {kind === 'chat' && showSessions && (
         <aside className={showSessions ? 'session-drawer open' : 'session-drawer'} style={{ top: headerHeight }} aria-label="Conversations">
           <div className="session-head">
             <span className="session-heading">会话</span>
@@ -1077,7 +1064,6 @@ export function PanelWindow({ kind }: { kind: PanelKind }) {
                 conversationService.setPersona(reset);
               }}
             />
-            <MemorySettings repository={memoryRepository} />
           </div>
         </div>
       )}

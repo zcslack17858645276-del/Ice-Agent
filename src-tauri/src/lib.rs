@@ -1,6 +1,5 @@
+mod gateway;
 mod remote;
-mod codex;
-mod work;
 
 use rusqlite::Connection;
 use serde::Deserialize;
@@ -585,6 +584,104 @@ fn audio_save_capture(app: AppHandle, data: Vec<u8>) -> Result<String, CommandEr
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// Folder holding the local OpenClaw installation's config (`~/.openclaw`).
+fn openclaw_root() -> Option<std::path::PathBuf> {
+    for key in ["OPENCLAW_HOME", "CLAWDBOT_HOME"] {
+        if let Ok(value) = std::env::var(key) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(std::path::PathBuf::from(trimmed));
+            }
+        }
+    }
+    for key in ["USERPROFILE", "HOME"] {
+        if let Ok(value) = std::env::var(key) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(std::path::PathBuf::from(trimmed).join(".openclaw"));
+            }
+        }
+    }
+    None
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GatewayConfig {
+    url: String,
+    token: String,
+    source: String,
+    config_path: String,
+}
+
+/// Resolves the OpenClaw gateway endpoint and shared token so the work panel can
+/// connect without the user copying `openclaw.json` by hand.
+#[tauri::command(rename = "work:gateway_config")]
+fn work_gateway_config() -> Result<GatewayConfig, CommandError> {
+    let mut port: u16 = 18_789;
+    let mut token_from_file: Option<String> = None;
+    let mut config_path = String::new();
+
+    if let Some(root) = openclaw_root() {
+        for name in ["openclaw.json", "gateway.json"] {
+            let path = root.join(name);
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(value) =
+                serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}'))
+            else {
+                continue;
+            };
+            if config_path.is_empty() {
+                config_path = path.to_string_lossy().into_owned();
+            }
+            let gateway = value.get("gateway");
+            if let Some(candidate) = gateway
+                .and_then(|section| section.get("port"))
+                .and_then(|item| item.as_u64())
+            {
+                if (1..=u16::MAX as u64).contains(&candidate) {
+                    port = candidate as u16;
+                }
+            }
+            if token_from_file.is_none() {
+                let candidates = [
+                    gateway
+                        .and_then(|section| section.get("auth"))
+                        .and_then(|auth| auth.get("token")),
+                    gateway.and_then(|section| section.get("token")),
+                    value.get("auth").and_then(|auth| auth.get("token")),
+                    value.get("token"),
+                ];
+                for candidate in candidates.into_iter().flatten() {
+                    if let Some(text) = candidate.as_str() {
+                        let trimmed = text.trim();
+                        if !trimmed.is_empty() {
+                            token_from_file = Some(trimmed.to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let env_token = std::env::var("OPENCLAW_GATEWAY_TOKEN").unwrap_or_default();
+    let (token, source) = match token_from_file {
+        Some(value) => (value, "config"),
+        None if !env_token.trim().is_empty() => (env_token.trim().to_string(), "env"),
+        None => (String::new(), "none"),
+    };
+
+    Ok(GatewayConfig {
+        url: format!("ws://127.0.0.1:{port}"),
+        token,
+        source: source.to_string(),
+        config_path,
+    })
+}
+
 const CREDENTIAL_SERVICE: &str = "com.iceagent.desktop";
 
 #[tauri::command(rename = "memory:initialize")]
@@ -1150,121 +1247,6 @@ fn task_run_command(
 }
 
 
-// ---------------------------------------------------------------- work mode
-
-fn work_engine(
-    app: &AppHandle,
-    state: &State<'_, work::WorkState>,
-) -> Result<std::sync::Arc<codex::CodexEngine>, String> {
-    let mut guard = state.engine.lock().map_err(|_| "engine lock".to_string())?;
-    if let Some(engine) = guard.as_ref() {
-        return Ok(engine.clone());
-    }
-    let handle = app.clone();
-    let sink: codex::EventSink = std::sync::Arc::new(move |event: serde_json::Value| {
-        let kind = event.get("type").and_then(|value| value.as_str()).unwrap_or("");
-        if kind == "request" {
-            let method = event.get("method").and_then(|value| value.as_str()).unwrap_or("");
-            if method.contains("requestApproval") {
-                let params = event.get("params").cloned().unwrap_or(serde_json::Value::Null);
-                let approval_id = params
-                    .get("itemId")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let request_id = event.get("id").and_then(|value| value.as_u64()).unwrap_or(0);
-                let thread_id = params
-                    .get("threadId")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                if let Some(card_id) = work::card_for_thread(&thread_id) {
-                    let _ = work::bind_approval(&approval_id, &card_id);
-                    if let Some(state) = handle.try_state::<work::WorkState>() {
-                        if let Ok(mut map) = state.approvals.lock() {
-                            map.insert(approval_id.clone(), request_id);
-                        }
-                    }
-                }
-                let _ = handle.emit(
-                    "work:approval",
-                    serde_json::json!({
-                        "approvalId": approval_id,
-                        "requestId": request_id,
-                        "command": params.get("command").cloned(),
-                        "reason": params.get("reason").cloned(),
-                    }),
-                );
-                return;
-            }
-        }
-        if kind == "notification" {
-            let method = event.get("method").and_then(|value| value.as_str()).unwrap_or("");
-            let params = event.get("params").cloned().unwrap_or(serde_json::Value::Null);
-            work::apply_notification(method, &params);
-        }
-        let _ = handle.emit("work:event", event);
-    });
-    let engine = codex::CodexEngine::spawn("D:\\codex\\workspace", sink)?;
-    *guard = Some(engine.clone());
-    Ok(engine)
-}
-
-#[tauri::command(rename = "work:prepare")]
-fn work_prepare(text: String, cwd: Option<String>) -> Result<work::WorkCard, String> {
-    let cwd = cwd.unwrap_or_else(|| "D:\\codex\\workspace".to_string());
-    work::prepare(&text, &cwd)
-}
-
-#[tauri::command(rename = "work:revise")]
-fn work_revise(id: String, expected_version: u64, text: String) -> Result<work::WorkCard, String> {
-    work::revise(&id, expected_version, &text)
-}
-
-#[tauri::command(rename = "work:dismiss")]
-fn work_dismiss(id: String, expected_version: u64) -> Result<work::WorkCard, String> {
-    work::dismiss(&id, expected_version)
-}
-
-#[tauri::command(rename = "work:confirm")]
-fn work_confirm(
-    app: AppHandle,
-    state: State<'_, work::WorkState>,
-    id: String,
-    expected_version: u64,
-) -> Result<serde_json::Value, String> {
-    let engine = work_engine(&app, &state)?;
-    work::confirm(&id, expected_version, &engine)
-}
-
-#[tauri::command(rename = "work:approve")]
-fn work_approve(
-    app: AppHandle,
-    state: State<'_, work::WorkState>,
-    approval_id: String,
-    decision: String,
-) -> Result<(), String> {
-    let engine = work_engine(&app, &state)?;
-    let request_id = state
-        .approvals
-        .lock()
-        .map_err(|_| "approval lock".to_string())?
-        .get(&approval_id)
-        .copied()
-        .ok_or("unknown approval")?;
-    work::approve(&approval_id, &decision, &engine, request_id)
-}
-
-#[tauri::command(rename = "work:status")]
-fn work_status(id: String) -> Option<serde_json::Value> {
-    work::status(&id)
-}
-
-#[tauri::command(rename = "work:list")]
-fn work_list() -> Vec<work::WorkCard> {
-    work::list()
-}
-
 #[tauri::command(rename = "task:start")]
 async fn task_start(
     app: AppHandle,
@@ -1792,6 +1774,7 @@ async fn window_open_panel(app: AppHandle, panel: String) -> Result<(), CommandE
         "chat" => ("panel-chat", "Ice Agent Chat"),
         "settings" => ("panel-settings", "Ice Agent Settings"),
         "chat-config" => ("panel-chat-config", "Chat Configuration"),
+        "work" => ("panel-work", "Ice Agent Work"),
         _ => {
             return Err(CommandError::WindowOperation(
                 "Unknown panel requested.".into(),
@@ -1810,6 +1793,7 @@ async fn window_open_panel(app: AppHandle, panel: String) -> Result<(), CommandE
     let (panel_width, panel_height, min_width, min_height, docked) = match panel.as_str() {
         "settings" => (1120.0, 700.0, 760.0, 520.0, false),
         "chat-config" => (640.0, 660.0, 480.0, 460.0, false),
+        "work" => (1020.0, 720.0, 760.0, 540.0, false),
         _ => (1080.0, 720.0, 820.0, 560.0, false),
     };
     let app_for_builder = app.clone();
@@ -1836,6 +1820,17 @@ async fn window_open_panel(app: AppHandle, panel: String) -> Result<(), CommandE
     .await
     .map_err(|error| CommandError::WindowOperation(error.to_string()))?
     .map_err(|error| CommandError::WindowOperation(error.to_string()))?;
+
+    // Diagnostic: `ICE_AGENT_DUMP_DOM=1` writes the rendered timeline structure
+    // to dom.log so visual bugs can be inspected without devtools.
+    if std::env::var("ICE_AGENT_DUMP_DOM").is_ok() {
+        let webview = created.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(7));
+            let script = r#"(function(){try{var items=[].slice.call(document.querySelectorAll('.work-timeline > *')).map(function(e){return {c:String(e.className),h:Math.round(e.getBoundingClientRect().height),t:(e.innerText||'').replace(/\s+/g,' ').slice(0,60)};});window.__TAURI_INTERNALS__.invoke('debug:log',{text:JSON.stringify(items)});}catch(err){window.__TAURI_INTERNALS__.invoke('debug:log',{text:'ERR '+err.message});}})()"#;
+            let _ = webview.eval(script);
+        });
+    }
 
     // The chat drawer hugs the pet; the larger windows open centred like Explorer.
     if let Some(main) = app.get_webview_window(MAIN_WINDOW) {
@@ -1864,6 +1859,15 @@ async fn window_open_panel(app: AppHandle, panel: String) -> Result<(), CommandE
     Ok(())
 }
 
+#[tauri::command(rename = "debug:log")]
+fn debug_log(text: String) {
+    if let Some(base) = std::env::var_os("LOCALAPPDATA") {
+        let directory = std::path::PathBuf::from(base).join("com.iceagent.desktop");
+        let _ = std::fs::create_dir_all(&directory);
+        let _ = std::fs::write(directory.join("dom.log"), text);
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct AppInfo {
     version: &'static str,
@@ -1890,7 +1894,7 @@ fn app_get_info() -> AppInfo {
 /// failure leaves no console output at all: the app simply "does not open".
 /// This log is the only way to tell an invisible window from a process that
 /// never started.
-fn startup_log(message: &str) {
+pub(crate) fn startup_log(message: &str) {
     use std::io::Write;
 
     let Some(base) = std::env::var_os("LOCALAPPDATA") else {
@@ -1922,8 +1926,8 @@ pub fn run() {
         .manage(VoiceTranscriptionRequests::default())
         .manage(VoiceSynthesisRequests::default())
         .manage(PetWindowState::default())
+        .manage(gateway::GatewayState::default())
         .manage(remote::RemoteState::default())
-        .manage(work::WorkState::default())
         .setup(|app| {
             let _ = data_dir(app.handle());
             if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
@@ -1943,6 +1947,19 @@ pub fn run() {
             } else {
                 startup_log("setup: main window is missing");
             }
+            // `ICE_AGENT_PANEL=work|chat|settings` opens a panel on launch. It is
+            // handy for debugging and for verifying a fresh install end to end.
+            if let Ok(panel) = std::env::var("ICE_AGENT_PANEL") {
+                let panel = panel.trim().to_owned();
+                if !panel.is_empty() {
+                    let handle = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(error) = window_open_panel(handle, panel).await {
+                            startup_log(&format!("setup: ICE_AGENT_PANEL failed: {error}"));
+                        }
+                    });
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1955,13 +1972,6 @@ pub fn run() {
             window_drag,
             window_drag_current,
             window_set_pet_scale,
-            work_prepare,
-            work_revise,
-            work_dismiss,
-            work_confirm,
-            work_approve,
-            work_status,
-            work_list,
             remote::server_local_config,
             remote::server_start,
             remote::server_stop,
@@ -1988,6 +1998,11 @@ pub fn run() {
             ai_usage,
             memory_initialize,
             audio_save_capture,
+            work_gateway_config,
+            gateway::gateway_connect,
+            gateway::gateway_send,
+            gateway::gateway_close,
+            debug_log,
             voice_transcribe,
             voice_cancel_transcription,
             voice_synthesize,
